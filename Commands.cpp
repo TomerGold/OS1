@@ -218,6 +218,7 @@ void ForegroundCommand::execute() {
     }
     toFGPid = toFG->getPid();
     cout << toFG->getCommand()->getOrigCmd() << " : " << toFGPid << endl;
+    Command* resumedCmd = toFG->getCommand();
     jobsList->removeJobById(jobId);
     if (kill(toFGPid, SIGCONT) == -1) { //TODO: if doesn't work replace
         // SIGCONT with 18
@@ -228,6 +229,70 @@ void ForegroundCommand::execute() {
         perror("smash error: waitpid failed");
         return;
     }
+    if (waitpid(toFGPid, NULL, WNOHANG) == toFGPid) { // if FG process
+        // finished after returning it to foreground - didn't recieve
+        // SIGSTOP while smash was waiting for it
+        delete resumedCmd;
+    } else { // TODO: return the job to the job list
+
+    }
+}
+
+void BackgroundCommand::execute() {
+    int jobId = 0;
+    pid_t toBGPid = 0;
+    JobsList::JobEntry* toBG = NULL;
+    if (argsNum > 2) {
+        cout << "smash error: bg: invalid arguments" << endl;
+        return;
+    }
+    if (argsNum == 2) { // if jobId was specified
+        try {
+            jobId = stoi(args[1]);
+        }
+        catch (const std::exception& e) { // if jobId is not a number
+            cout << "smash error: bg: invalid arguments" << endl;
+            return;
+        }
+        if (jobId < 1) { // jobId is invalid
+            cout << "smash error: bg: invalid arguments" << endl;
+            return;
+        }
+        toBG = jobsList->getJobById(jobId);
+        if (toBG == NULL) { // if requested jobId doesn't exist
+            cout << "smash error: bg: job-id " << jobId
+                 << " does not exist"
+                 << endl;
+            return;
+        }
+        if (toBG->getStatus() != STOPPED) {
+            cout << "smash error: bg: job-id " << jobId << " is already "
+                                                           "running in "
+                                                           "the background"
+                 << endl;
+            return;
+        }
+    } else if (argsNum == 1 && !(jobsList->stoppedJobExists())) {
+        cout << "smash error: bg: there is no stopped jobs to resume" <<
+             endl;
+        return;
+    } else {
+        toBG = jobsList->getLastStoppedJob(&jobId);
+    }
+    toBGPid = toBG->getPid();
+    cout << toBG->getCommand()->getOrigCmd() << " : " << toBGPid << endl;
+    kill(toBGPid, SIGCONT);
+    toBG->setStatus(RUNNING);
+}
+
+void QuitCommand::execute() {
+    if (argsNum > 1) {
+        if (strcmp(args[1], "kill") == 0) {//kill was specified
+            jobsList->killAllJobs();
+        }
+    }
+    jobsList->destroyCmds();
+    exit(0);//TODO: does exit invokes destructores?
 }
 
 JobsList::JobsList() : maxId(0), jobsList() {
@@ -287,6 +352,57 @@ void JobsList::removeJobById(int jobId) {
     }
 }
 
+bool JobsList::stoppedJobExists() const {
+    for (auto iter = jobsList.begin(); iter != jobsList.end(); ++iter) {
+        if (iter->getStatus() == STOPPED) {
+            return true;
+        }
+    }
+    return false;
+}
+
+JobsList::JobEntry* JobsList::getLastStoppedJob(int* jobId) {
+    JobsList::JobEntry* maxStoppedJob = NULL;
+    for (auto iter = jobsList.begin(); iter != jobsList.end();
+         ++iter) {
+        if (iter->getStatus() == STOPPED) {
+            maxStoppedJob = &(*iter);
+        }
+    }
+    if (maxStoppedJob != NULL) {
+        *jobId = maxStoppedJob->getJobId();
+    }
+    return maxStoppedJob;
+}
+
+void JobsList::removeFinishedJobs() {
+    //TODO: before removing JobEntry delete the CMD!!!
+}
+
+void JobsList::killAllJobs() {
+    cout << "smash: sending SIGKILL signal to " << jobsList.size()
+         << "jobs:"
+         << endl;
+    for (auto iter = jobsList.begin(); iter != jobsList.end();
+         ++iter) {
+        pid_t currPid = iter->getPid();
+        cout << currPid << ": " <<
+             iter->getCommand()->getOrigCmd() << endl;
+        if (kill(currPid, SIGKILL) == -1) {
+            perror("smash error: kill failed");
+            return;
+        }
+    }
+}
+
+void JobsList::destroyCmds() {
+    for (auto iter = jobsList.begin(); iter != jobsList.end();
+         ++iter) {
+        delete iter->getCommand(); // should delete all cmds generated
+        // and entered to the jobsList (shouldn't be other cmds);
+    }
+}
+
 SmallShell::SmallShell() : prompt(DEFAULT_PROMPT), lastPwd(NULL),
                            jobsList() {
 // TODO: add your implementation
@@ -329,6 +445,12 @@ Command* SmallShell::CreateCommand(const char* cmd_line) {
     if (cmd_trimmed.find("fg") == 0) {
         return new ForegroundCommand(cmd_line, &jobsList);
     }
+    if (cmd_trimmed.find("bg") == 0) {
+        return new BackgroundCommand(cmd_line, &jobsList);
+    }
+    if (cmd_trimmed.find("quit") == 0) {
+        return new QuitCommand(cmd_line, &jobsList);
+    }
 
 
 //  else if ...
@@ -345,7 +467,13 @@ void SmallShell::executeCommand(const char* cmd_line) {
     Command* cmd = CreateCommand(cmd_line);
     // TODO: check if foreground/background
     cmd->execute();
-    // TODO: delete Command if foreground (not joblisted)
+    if (dynamic_cast<BuiltInCommand*>(cmd) != NULL) {//TODO: need to
+        // think if there is another way to delete finished cmds which
+        // are not in the jobsList
+        delete cmd;
+    }
+    // TODO: remember to delete external Command if foreground (not
+    //  joblisted)
     // Please note that you must fork smash process for some commands (e.g., external commands....)
 
 }

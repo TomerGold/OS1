@@ -116,11 +116,14 @@ public:
 class JobsList;
 
 class QuitCommand : public BuiltInCommand {
-// TODO: Add your data members public:
-    QuitCommand(const char* cmd_line, JobsList* jobs);
+    JobsList* jobsList;
+public:
+    QuitCommand(const char* cmd_line, JobsList* jobs) : BuiltInCommand
+                                                                (cmd_line),
+                                                        jobsList(jobs) {
+    };
 
-    virtual ~QuitCommand() {
-    }
+    virtual ~QuitCommand() = default;
 
     void execute() override;
 };
@@ -201,6 +204,10 @@ public:
         return jobsList.empty();
     }
 
+    bool stoppedJobExists() const;
+
+    void destroyCmds();
+
     // TODO: Add extra methods or modify exisitng ones as needed
 };
 
@@ -245,12 +252,15 @@ public:
 };
 
 class BackgroundCommand : public BuiltInCommand {
-    // TODO: Add your data members
+    JobsList* jobsList;
 public:
-    BackgroundCommand(const char* cmd_line, JobsList* jobs);
+    BackgroundCommand(const char* cmd_line, JobsList* jobs)
+            : BuiltInCommand
+                      (cmd_line),
+              jobsList(jobs) {
+    };
 
-    virtual ~BackgroundCommand() {
-    }
+    virtual ~BackgroundCommand() = default;
 
     void execute() override;
 };
