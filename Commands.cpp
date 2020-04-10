@@ -85,9 +85,13 @@ void _removeBackgroundSign(char* cmd_line) {
 
 // TODO: Add your implementation for classes in Commands.h
 
-Command::Command(const char* cmd_line) {
-    argsNum = _parseCommandLine(cmd_line, args);
-    //TODO: handle jobId
+Command::Command(const char* cmd_line) : isBackground(false),
+                                         origCmd(cmd_line) {
+    isBackground = _isBackgroundComamnd(cmd_line);
+    char* without_amper;
+    strcpy(without_amper, cmd_line);
+    _removeBackgroundSign(without_amper);
+    argsNum = _parseCommandLine(without_amper, args);
 }
 
 void ChangePrompt::execute() {
@@ -112,7 +116,8 @@ void GetCurrDirCommand::execute() {
     free(currPath);
 }
 
-void ChangeDirCommand::execute() {
+void ChangeDirCommand::execute() { // TODO: check what we should do if
+    // there is a & in the end of the given pwd
     if (argsNum > 2) {
         cout << "smash error: cd: too many arguments" << endl;
     }
@@ -144,7 +149,146 @@ void ChangeDirCommand::execute() {
     *lastPwd = currPath;
 }
 
-SmallShell::SmallShell() : prompt(DEFAULT_PROMPT), lastPwd(NULL) {
+void JobsCommand::execute() {
+    jobsList->removeFinishedJobs();
+    jobsList->printJobsList();
+}
+
+void KillCommand::execute() {
+    //TODO: check if after kill -9 job is removed from jobLists
+    int sigNum = 0;
+    int jobId = 0;
+    try {
+        sigNum = stoi(args[1]) * (-1);
+        jobId = stoi(args[2]);
+    }
+    catch (const std::exception& e) {
+        cout << "smash error: kill: invalid arguments" << endl;
+        return;
+    }
+    if (argsNum > 3 || sigNum < 0 || sigNum > 31) {
+        cout << "smash error: kill: invalid arguments" << endl;
+        return;
+    }
+    JobsList::JobEntry* toKill = jobsList->getJobById(jobId);
+    if (toKill == NULL) {
+        cout << "smash error: kill: job-id " << jobId << " does not "
+                                                         "exist" << endl;
+    }
+    if (kill(toKill->getPid(), sigNum) == -1) {
+        perror("smash error: kill failed");
+        return;
+    }
+    cout << "signal number " << sigNum << " was sent to pid "
+         << toKill->getPid() << endl;
+}
+
+void ForegroundCommand::execute() {
+    int jobId = 0;
+    pid_t toFGPid = 0;
+    JobsList::JobEntry* toFG = NULL;
+    if (argsNum > 2) {
+        cout << "smash error: fg: invalid arguments" << endl;
+        return;
+    }
+    if (argsNum == 2) { // if jobId was specified
+        try {
+            jobId = stoi(args[1]);
+        }
+        catch (const std::exception& e) { // if jobId is not a number
+            cout << "smash error: fg: invalid arguments" << endl;
+            return;
+        }
+        if (jobId < 1) { // jobId is invalid
+            cout << "smash error: fg: invalid arguments" << endl;
+            return;
+        }
+        toFG = jobsList->getJobById(jobId);
+        if (toFG == NULL) { // if requested jobId doesn't exist
+            cout << "smash error: fg: job-id " << jobId
+                 << " does not exist"
+                 << endl;
+            return;
+        }
+    } else if (argsNum == 1 && jobsList->isJobListEmpty()) {
+        cout << "smash error: fg: jobs list is empty" << endl;
+        return;
+    } else {
+        toFG = jobsList->getLastJob(&jobId);
+    }
+    toFGPid = toFG->getPid();
+    cout << toFG->getCommand()->getOrigCmd() << " : " << toFGPid << endl;
+    jobsList->removeJobById(jobId);
+    if (kill(toFGPid, SIGCONT) == -1) { //TODO: if doesn't work replace
+        // SIGCONT with 18
+        perror("smash error: kill failed");
+        return;
+    }
+    if (waitpid(toFGPid, NULL) == -1) {
+        perror("smash error: waitpid failed");
+        return;
+    }
+}
+
+JobsList::JobsList() : maxId(0), jobsList() {
+}
+
+JobsList::JobEntry* JobsList::getJobById(int jobId) {
+    for (auto iter = jobsList.begin(); iter != jobsList.end();
+         ++iter) {
+        if (iter->getJobId() == jobId) {
+            return &(*iter); //TODO: weakpoint, we're not sure about the &*
+        }
+    }
+    return NULL;
+}
+
+JobsList::JobEntry* JobsList::getLastJob(int* lastJobId) {
+    if (jobsList.empty()) {
+        *lastJobId = -1;
+        return NULL;
+    }
+    *lastJobId = jobsList.back().getJobId();
+    return &(jobsList.back()); //TODO: may not work because back return
+    // reference to the last object and we want to return the address to it
+}
+
+void JobsList::printJobsList() {
+    for (auto iter = jobsList.begin(); iter != jobsList.end();
+         ++iter) {
+        time_t currTime = time(NULL);
+        if (currTime == (time_t) (-1)) {
+            perror("smash error: time failed");
+            return;
+        }
+        int elapsedTime = difftime(iter->getStartTime(), currTime);
+        //TODO : check if it is ok to use int
+        cout << "[" << iter->getJobId() << "] " <<
+             iter->getCommand()->getOrigCmd() << " : " <<
+             iter->getPid() << " " << elapsedTime << " secs";
+        if (iter->getStatus() == STOPPED) {
+            cout << " (stopped)";
+        }
+        cout << endl;
+    }
+}
+
+void JobsList::removeJobById(int jobId) {
+    for (auto iter = jobsList.begin(); iter != jobsList.end();
+         ++iter) {
+        if (iter->getJobId() == jobId) {
+            jobsList.remove(*iter);
+            if (jobsList.empty()) {
+                maxId = 0;
+            }
+            maxId = jobsList.back().getJobId();
+            return;
+        }
+    }
+}
+
+SmallShell::SmallShell() : prompt(DEFAULT_PROMPT), lastPwd(NULL),
+                           jobsList() {
 // TODO: add your implementation
 }
 
@@ -152,6 +296,7 @@ SmallShell::~SmallShell() {
     free(lastPwd);
 // TODO: add your implementation
 }
+
 
 /**
 * Creates and returns a pointer to Command class which matches the given command line (cmd_line)
@@ -174,6 +319,15 @@ Command* SmallShell::CreateCommand(const char* cmd_line) {
     }
     if (cmd_trimmed.find("cd") == 0) {
         return new ChangeDirCommand(cmd_line, &lastPwd);
+    }
+    if (cmd_trimmed.find("jobs") == 0) {
+        return new JobsCommand(cmd_line, &jobsList);
+    }
+    if (cmd_trimmed.find("kill") == 0) {
+        return new KillCommand(cmd_line, &jobsList);
+    }
+    if (cmd_trimmed.find("fg") == 0) {
+        return new ForegroundCommand(cmd_line, &jobsList);
     }
 
 
