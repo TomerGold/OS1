@@ -83,22 +83,24 @@ void _removeBackgroundSign(char* cmd_line) {
     cmd_line[str.find_last_not_of(WHITESPACE, idx) + 1] = 0;
 }
 
-// TODO: Add your implementation for classes in Commands.h
+///Command functions:
 
 Command::Command(const char* cmd_line) : isBackground(false),
                                          origCmd(cmd_line) {
+    for (int i = 0; i <COMMAND_MAX_ARGS + 1 ; ++i) {
+        args[i] = NULL;
+    }
     isBackground = _isBackgroundComamnd(cmd_line);
-    char* without_amper;
+    char* without_amper = NULL; //TODO do we need to declare its size??
     strcpy(without_amper, cmd_line);
     _removeBackgroundSign(without_amper);
     argsNum = _parseCommandLine(without_amper, args);
 }
-
 void ChangePrompt::execute() {
     if (args[1] == NULL) {
-        s->setPrompt(DEFAULT_PROMPT);
+        smallShell->setPrompt(DEFAULT_PROMPT);
     }
-    s->setPrompt(args[1]);
+    smallShell->setPrompt(args[1]);
 }
 
 void ShowPidCommand::execute() {
@@ -106,8 +108,8 @@ void ShowPidCommand::execute() {
 }
 
 void GetCurrDirCommand::execute() {
-    char* currPath = getcwd(NULL, 0); //TODO: if pwd doesn't work,
-    // check getcwd inputs
+    char* currPath = getcwd(NULL, 0); //TODO: if pwd doesn't work, check getcwd inputs
+
     if (currPath == NULL) {
         perror("smash error: getcwd failed");
         return;
@@ -295,6 +297,8 @@ void QuitCommand::execute() {
     exit(0);//TODO: does exit invokes destructores?
 }
 
+///Jobs list functions:
+
 JobsList::JobsList() : maxId(0), jobsList() {
 }
 
@@ -380,9 +384,7 @@ void JobsList::removeFinishedJobs() {
 }
 
 void JobsList::killAllJobs() {
-    cout << "smash: sending SIGKILL signal to " << jobsList.size()
-         << "jobs:"
-         << endl;
+    cout << "smash: sending SIGKILL signal to " << jobsList.size()<< "jobs:"<< endl;
     for (auto iter = jobsList.begin(); iter != jobsList.end();
          ++iter) {
         pid_t currPid = iter->getPid();
@@ -403,9 +405,10 @@ void JobsList::destroyCmds() {
     }
 }
 
+///Smash functions:
+
 SmallShell::SmallShell() : prompt(DEFAULT_PROMPT), lastPwd(NULL),
                            jobsList() {
-// TODO: add your implementation
 }
 
 SmallShell::~SmallShell() {
@@ -413,13 +416,7 @@ SmallShell::~SmallShell() {
 // TODO: add your implementation
 }
 
-
-/**
-* Creates and returns a pointer to Command class which matches the given command line (cmd_line)
-*/
 Command* SmallShell::CreateCommand(const char* cmd_line) {
-    // For example:
-
     string cmd_s = string(cmd_line);
     string cmd_trimmed = _trim(cmd_s);
     //TODO: check if args[0] == "" and handle this
@@ -452,7 +449,6 @@ Command* SmallShell::CreateCommand(const char* cmd_line) {
         return new QuitCommand(cmd_line, &jobsList);
     }
 
-
 //  else if ...
 //  .....
 //  else {
@@ -462,10 +458,9 @@ Command* SmallShell::CreateCommand(const char* cmd_line) {
 }
 
 void SmallShell::executeCommand(const char* cmd_line) {
-    // TODO: Add your implementation here
-    // for example:
     Command* cmd = CreateCommand(cmd_line);
     // TODO: check if foreground/background
+    jobsList.removeFinishedJobs(); //TODO before each execute??
     cmd->execute();
     if (dynamic_cast<BuiltInCommand*>(cmd) != NULL) {//TODO: need to
         // think if there is another way to delete finished cmds which
