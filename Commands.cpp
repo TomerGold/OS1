@@ -95,6 +95,7 @@ Command::Command(const char* cmd_line) : isBackground(false),
     strcpy(without_amper, cmd_line);
     _removeBackgroundSign(without_amper);
     argsNum = _parseCommandLine(without_amper, args);
+    free(without_amper);
 }
 void ChangePrompt::execute() {
     if (args[1] == NULL) {
