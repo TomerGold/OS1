@@ -43,6 +43,19 @@ string _trim(const std::string& s) {
     return _rtrim(_ltrim(s));
 }
 
+//function to handle foregrounded cmd which was interrupted by a signal
+void handleInterruptedCmd(pid_t pid, Command* cmd, JobsList* jobsList) {
+    if (sigINTOn) { // if FG process received ctrl+c
+        kill(pid, SIGKILL);
+        cout << "smash: process " << pid << " was killed" << endl;
+        delete cmd;
+    } else if (sigSTPOn) { // if FG process received ctrl+z
+        kill(pid, SIGSTOP);
+        cout << "smash: process " << pid << " was stopped" << endl;
+        jobsList->addJob(cmd, true);
+    }
+}
+
 //converting the cmd string to cmd and options in the array args,
 // args[0] is the cmd.
 int _parseCommandLine(const char* cmd_line, char** args) {
@@ -86,17 +99,18 @@ void _removeBackgroundSign(char* cmd_line) {
 ///Command functions:
 
 Command::Command(const char* cmd_line) : isBackground(false),
-                                         origCmd(cmd_line) {
-    for (int i = 0; i <COMMAND_MAX_ARGS + 1 ; ++i) {
+                                         origCmd(cmd_line), pid(0),
+                                         output(1) {
+    for (int i = 0; i < COMMAND_MAX_ARGS + 1; ++i) {
         args[i] = NULL;
     }
     isBackground = _isBackgroundComamnd(cmd_line);
-    char* without_amper = NULL; //TODO do we need to declare its size??
+    char without_amper[COMMAND_ARGS_MAX_LENGTH + 1];
     strcpy(without_amper, cmd_line);
     _removeBackgroundSign(without_amper);
     argsNum = _parseCommandLine(without_amper, args);
-    free(without_amper);
 }
+
 void ChangePrompt::execute() {
     if (args[1] == NULL) {
         smallShell->setPrompt(DEFAULT_PROMPT);
@@ -109,10 +123,9 @@ void ShowPidCommand::execute() {
 }
 
 void GetCurrDirCommand::execute() {
-    char* currPath = getcwd(NULL, 0); //TODO: if pwd doesn't work, check getcwd inputs
-
+    char* currPath = get_current_dir_name();
     if (currPath == NULL) {
-        perror("smash error: getcwd failed");
+        perror("smash error: get_current_dir_name failed");
         return;
     }
     cout << currPath << endl;
@@ -128,9 +141,9 @@ void ChangeDirCommand::execute() { // TODO: check what we should do if
         cout << "smash error: cd: OLDPWD not set" << endl;
         return;
     }
-    char* currPath = getcwd(NULL, 0);
+    char* currPath = get_current_dir_name();
     if (currPath == NULL) {
-        perror("smash error: getcwd failed"); //TODO : make sure that
+        perror("smash error: get_current_dir_name failed"); //TODO : make sure that
         // this error won't be a problem
         return;
     }
@@ -228,16 +241,11 @@ void ForegroundCommand::execute() {
         perror("smash error: kill failed");
         return;
     }
-    if (waitpid(toFGPid, NULL) == -1) {
-        perror("smash error: waitpid failed");
-        return;
-    }
-    if (waitpid(toFGPid, NULL, WNOHANG) == toFGPid) { // if FG process
-        // finished after returning it to foreground - didn't recieve
-        // SIGSTOP while smash was waiting for it
-        delete resumedCmd;
-    } else { // TODO: return the job to the job list
-
+    if (waitpid(toFGPid, NULL) == -1) { //was interrupted by signal
+        handleInterruptedCmd(toFGPid, resumedCmd, jobsList);
+    } else if (waitpid(pid, NULL, WNOHANG) ==
+               pid) { //process finished successfully in foreground
+        delete resumedCmd; //TODO: should work but it's weakpoint
     }
 }
 
@@ -295,8 +303,43 @@ void QuitCommand::execute() {
         }
     }
     jobsList->destroyCmds();
-    exit(0);//TODO: does exit invokes destructores?
+    smash->setToQuit(true);
 }
+
+void ExternalCommand::execute() {
+    string externCmd = "";
+    int i = 0;
+    while (args[i] != NULL) { // TODO: check that makes a correct command
+        // for bash
+        externCmd += args[i];
+        externCmd += " ";
+        i++;
+    }
+    const char* bashArgs[3] = {"bash", "-c", externCmd.c_str()};
+    pid_t pid = fork();
+    if (pid == -1) {
+        perror("smash error: fork failed");
+        return;
+    }
+    if (pid == 0) { // child process
+        setpgrp();
+        execv("/bin/bash", bashArgs);
+        perror("smash error: execv failed");
+    } else { // smash process
+        this->pid = pid;
+        if (isBackgroundCmd()) {//should not wait and add to jobsList
+            jobsList->addJob(this);
+        } else {//should run in the foreground and wait for child to finish
+            if (waitpid(pid, NULL) == -1) {//was interrupted by a signal
+                handleInterruptedCmd(pid, this, jobsList);
+            } else if (waitpid(pid, NULL, WNOHANG) ==
+                       pid) { //process finished successfully in foreground
+                delete this; //TODO: should work but it's weakpoint
+            }
+        }
+    }
+}
+
 
 ///Jobs list functions:
 
@@ -358,7 +401,8 @@ void JobsList::removeJobById(int jobId) {
 }
 
 bool JobsList::stoppedJobExists() const {
-    for (auto iter = jobsList.begin(); iter != jobsList.end(); ++iter) {
+    for (auto iter = jobsList.begin();
+         iter != jobsList.end(); ++iter) {
         if (iter->getStatus() == STOPPED) {
             return true;
         }
@@ -385,7 +429,8 @@ void JobsList::removeFinishedJobs() {
 }
 
 void JobsList::killAllJobs() {
-    cout << "smash: sending SIGKILL signal to " << jobsList.size()<< "jobs:"<< endl;
+    cout << "smash: sending SIGKILL signal to " << jobsList.size()
+         << "jobs:" << endl;
     for (auto iter = jobsList.begin(); iter != jobsList.end();
          ++iter) {
         pid_t currPid = iter->getPid();
@@ -406,10 +451,17 @@ void JobsList::destroyCmds() {
     }
 }
 
+void JobsList::addJob(Command* cmd, bool isStopped) {
+    removeFinishedJobs();
+    STATUS status = isStopped ? STOPPED : RUNNING;
+    JobEntry toAdd(++maxId, cmd->getPid(), cmd, status);
+    jobsList.push_back(toAdd);
+}
+
 ///Smash functions:
 
 SmallShell::SmallShell() : prompt(DEFAULT_PROMPT), lastPwd(NULL),
-                           jobsList() {
+                           jobsList(), toQuit(false) {
 }
 
 SmallShell::~SmallShell() {
@@ -447,21 +499,22 @@ Command* SmallShell::CreateCommand(const char* cmd_line) {
         return new BackgroundCommand(cmd_line, &jobsList);
     }
     if (cmd_trimmed.find("quit") == 0) {
-        return new QuitCommand(cmd_line, &jobsList);
+        return new QuitCommand(cmd_line, &jobsList, this);
     }
+        //TODO: enter special commands here!!! before externals!!!
 
-//  else if ...
-//  .....
-//  else {
-//    return new ExternalCommand(cmd_line);
-//  }
-//    return nullptr;
+    else { // External Cmds
+        return new ExternalCommand(cmd_line, &jobsList);
+    }
+    return nullptr;
 }
 
 void SmallShell::executeCommand(const char* cmd_line) {
     Command* cmd = CreateCommand(cmd_line);
     // TODO: check if foreground/background
-    jobsList.removeFinishedJobs(); //TODO before each execute??
+    jobsList.removeFinishedJobs();
+
+
     cmd->execute();
     if (dynamic_cast<BuiltInCommand*>(cmd) != NULL) {//TODO: need to
         // think if there is another way to delete finished cmds which
