@@ -49,10 +49,12 @@ void handleInterruptedCmd(pid_t pid, Command* cmd, JobsList* jobsList) {
         kill(pid, SIGKILL);
         cout << "smash: process " << pid << " was killed" << endl;
         delete cmd;
+        sigINTOn = false;
     } else if (sigSTPOn) { // if FG process received ctrl+z
         kill(pid, SIGSTOP);
         cout << "smash: process " << pid << " was stopped" << endl;
         jobsList->addJob(cmd, true);
+        sigSTPOn = false;
     }
 }
 
@@ -99,8 +101,7 @@ void _removeBackgroundSign(char* cmd_line) {
 ///Command functions:
 
 Command::Command(const char* cmd_line) : isBackground(false),
-                                         origCmd(cmd_line), pid(0),
-                                         output(1) {
+                                         origCmd(cmd_line), pid(0) {
     for (int i = 0; i < COMMAND_MAX_ARGS + 1; ++i) {
         args[i] = NULL;
     }
@@ -109,6 +110,35 @@ Command::Command(const char* cmd_line) : isBackground(false),
     strcpy(without_amper, cmd_line);
     _removeBackgroundSign(without_amper);
     argsNum = _parseCommandLine(without_amper, args);
+}
+
+SPECIALCHARS Command::containsSpecialChars() const {
+    for (int i = 1; i < argsNum; i++) {
+        if (strcmp(args[i], "<") == 0) {
+            return REDIR;
+        } else if (strcmp(args[i], "<<") == 0) {
+            return REDIR_APPEND;
+        } else if (strcmp(args[i], "|") == 0) {
+            return PIPE;
+        } else if (strcmp(args[i], "|&") == 0) {
+            return PIPE_ERR;
+        }
+    }
+    return NONE;
+}
+
+int Command::setOutputFD(const char* path, SPECIALCHARS type) {
+    if (type != REDIR && type != REDIR_APPEND) {
+        return 1;
+    }
+    int stdoutCopy = dup(1);
+    close(1);
+    if (type == REDIR) {
+        fopen(path, "w");
+    } else { //must be REDIR_APPEND
+        fopen(path, "a");
+    }
+    return stdoutCopy;
 }
 
 void ChangePrompt::execute() {
@@ -190,6 +220,7 @@ void KillCommand::execute() {
     if (toKill == NULL) {
         cout << "smash error: kill: job-id " << jobId << " does not "
                                                          "exist" << endl;
+        return;
     }
     if (kill(toKill->getPid(), sigNum) == -1) {
         perror("smash error: kill failed");
@@ -343,7 +374,7 @@ void ExternalCommand::execute() {
 
 ///Jobs list functions:
 
-JobsList::JobsList() : maxId(0), jobsList() {
+JobsList::JobsList() : maxId(0), jobsList(0) {
 }
 
 JobsList::JobEntry* JobsList::getJobById(int jobId) {
@@ -358,7 +389,7 @@ JobsList::JobEntry* JobsList::getJobById(int jobId) {
 
 JobsList::JobEntry* JobsList::getLastJob(int* lastJobId) {
     if (jobsList.empty()) {
-        *lastJobId = -1;
+        *lastJobId = 0;
         return NULL;
     }
     *lastJobId = jobsList.back().getJobId();
@@ -425,7 +456,20 @@ JobsList::JobEntry* JobsList::getLastStoppedJob(int* jobId) {
 }
 
 void JobsList::removeFinishedJobs() {
-    //TODO: before removing JobEntry delete the CMD!!!
+    //TODO: ask in the piazza what happens if proccess finished after
+    // passing it in the loop
+    if (jobsList.empty()) return;
+    auto iter = jobsList.begin();
+    while (iter != jobsList.end()) {
+        if (waitpid(iter->getPid(), NULL, WNOHANG) == iter->getPid()) {
+            auto toDelete = iter++;
+            delete toDelete->getCommand();
+            jobsList.remove(*toDelete);
+            continue;
+        }
+        ++iter;
+    }
+    getLastJob(&maxId); //updates maxId to the last job jobId
 }
 
 void JobsList::killAllJobs() {
@@ -472,7 +516,7 @@ SmallShell::~SmallShell() {
 Command* SmallShell::CreateCommand(const char* cmd_line) {
     string cmd_s = string(cmd_line);
     string cmd_trimmed = _trim(cmd_s);
-    //TODO: check if args[0] == "" and handle this
+
     //find return The position of the first character of the first match
     if (cmd_trimmed.find("pwd") == 0) {
         return new GetCurrDirCommand(cmd_line);
@@ -501,26 +545,49 @@ Command* SmallShell::CreateCommand(const char* cmd_line) {
     if (cmd_trimmed.find("quit") == 0) {
         return new QuitCommand(cmd_line, &jobsList, this);
     }
+    if (cmd_trimmed.find('|') != string::npos) {
+        return new PipeCommand(cmd_line);
+    }
         //TODO: enter special commands here!!! before externals!!!
 
     else { // External Cmds
         return new ExternalCommand(cmd_line, &jobsList);
     }
-    return nullptr;
 }
 
 void SmallShell::executeCommand(const char* cmd_line) {
+    int stdoutCopy = 1;
+    if (_trim(cmd_line).empty()) { //no cmd received, go get next cmd
+        return;
+    }     //TODO: ask if that what we should do in the piazza!
     Command* cmd = CreateCommand(cmd_line);
     // TODO: check if foreground/background
     jobsList.removeFinishedJobs();
-
-
+    SPECIALCHARS type = cmd->containsSpecialChars();
+    if (type == PIPE || type == PIPE_ERR) {
+        //TODO: split cmd_line to before and after '|'
+        //TODO: check if there '&' in the second command and if
+        // there is add & to the first cmd
+        //TODO: create both sub cmds
+        //TODO: exec each one
+    }
+    if (type == REDIR || type == REDIR_APPEND) { // redirect stdout to the
+        // requested file
+        stdoutCopy = cmd->setOutputFD(cmd->getPath(), type);
+    }
     cmd->execute();
+    if (type == REDIR ||
+        type == REDIR_APPEND) { //restore stdout to channel 1 in FDT
+        close(1);
+        dup2(stdoutCopy, 1);
+        close(stdoutCopy);
+    }
     if (dynamic_cast<BuiltInCommand*>(cmd) != NULL) {//TODO: need to
         // think if there is another way to delete finished cmds which
         // are not in the jobsList
         delete cmd;
     }
+
     // TODO: remember to delete external Command if foreground (not
     //  joblisted)
     // Please note that you must fork smash process for some commands (e.g., external commands....)

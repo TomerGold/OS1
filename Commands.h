@@ -4,6 +4,9 @@
 #include <vector>
 #include <list>
 #include <cstring>
+#include <fstream>
+
+using std::ostream;
 
 #define COMMAND_ARGS_MAX_LENGTH (200)
 #define COMMAND_MAX_ARGS (20)
@@ -18,8 +21,8 @@ typedef enum {
     RUNNING, STOPPED
 } STATUS;
 typedef enum {
-    REDIR, REDIR_APPEND, PIPE, PIPE_ERR
-} SPECIAL;
+    REDIR, REDIR_APPEND, PIPE, PIPE_ERR, NONE
+} SPECIALCHARS;
 
 class Command {
 protected:
@@ -28,7 +31,6 @@ protected:
     int argsNum;
     bool isBackground;
     pid_t pid;
-    int output;
 public:
     explicit Command(const char* cmd_line);
 
@@ -40,7 +42,7 @@ public:
                 break;
             }
         }
-    };
+    }
 
     string getOrigCmd() const {
         return origCmd;
@@ -56,9 +58,14 @@ public:
         return pid;
     }
 
-    SPECIAL containsSpecialChars() const;
+    SPECIALCHARS containsSpecialChars() const;
 
-    int createOutputFD(const char* path);
+    int setOutputFD(const char* path, SPECIALCHARS type);
+
+    const char* getPath() const {
+        return args[argsNum - 1];
+    }
+
     //virtual void prepare();
     //virtual void cleanup();
     // TODO: Add your extra methods if needed
@@ -75,25 +82,12 @@ public:
 class PipeCommand : public Command {
     // TODO: Add your data members
 public:
-    PipeCommand(const char* cmd_line);
+    explicit PipeCommand(const char* cmd_line);
 
     virtual ~PipeCommand() {
     }
 
     void execute() override;
-};
-
-class RedirectionCommand : public Command {
-    // TODO: Add your data members
-public:
-    explicit RedirectionCommand(const char* cmd_line);
-
-    virtual ~RedirectionCommand() {
-    }
-
-    void execute() override;
-    //void prepare() override;
-    //void cleanup() override;
 };
 
 class ChangeDirCommand : public BuiltInCommand {
@@ -143,7 +137,7 @@ public:
 
         JobEntry(int jobId, int pid, Command* cmd, STATUS status) :
                 jobId(jobId), pid(pid), cmd(cmd), status(status),
-                startTime(time(NULL)) {
+                startTime((time)(NULL)) {
             if (startTime == (time_t) (-1)) {
                 perror("smash error: time failed");
             }
@@ -367,6 +361,19 @@ public:
 
 #endif //SMASH_COMMAND_H_
 
+//TODO: consider deleting this class
+//class RedirectionCommand : public Command {
+//    // TODO: Add your data members
+//public:
+//    explicit RedirectionCommand(const char* cmd_line);
+//
+//    virtual ~RedirectionCommand() {
+//    }
+//
+//    void execute() override;
+//    //void prepare() override;
+//    //void cleanup() override;
+//};
 
 //class CommandsHistory {
 //protected:
