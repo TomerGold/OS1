@@ -22,7 +22,7 @@ typedef enum {
 } STATUS;
 typedef enum {
     REDIR, REDIR_APPEND, PIPE, PIPE_ERR, NONE
-} SPECIALCHARS;
+} IO_CHARS;
 
 class Command {
 protected:
@@ -31,6 +31,10 @@ protected:
     int argsNum;
     bool isBackground;
     pid_t pid;
+    bool redirected;
+    bool piped;
+    IO_CHARS type;
+    int stdOutCopy;
 public:
     explicit Command(const char* cmd_line);
 
@@ -58,13 +62,31 @@ public:
         return pid;
     }
 
-    SPECIALCHARS containsSpecialChars() const;
+    IO_CHARS containsSpecialChars() const;
 
-    int setOutputFD(const char* path, SPECIALCHARS type);
+    void setOutputFD(const char* path, IO_CHARS type);
+
+    bool isRedirected() const {
+        return redirected;
+    }
+
+    int getStdOutCopy() const {
+        return stdOutCopy;
+    }
 
     const char* getPath() const {
         return args[argsNum - 1];
     }
+
+    IO_CHARS getType() const {
+        return type;
+    }
+
+    bool isPiped() const {
+        return piped;
+    }
+
+    void restoreStdOut();
 
     //virtual void prepare();
     //virtual void cleanup();
@@ -77,17 +99,6 @@ public:
     };
 
     virtual ~BuiltInCommand() = default;
-};
-
-class PipeCommand : public Command {
-    // TODO: Add your data members
-public:
-    explicit PipeCommand(const char* cmd_line);
-
-    virtual ~PipeCommand() {
-    }
-
-    void execute() override;
 };
 
 class ChangeDirCommand : public BuiltInCommand {
@@ -217,6 +228,31 @@ public:
     void execute() override;
 };
 
+class PipeCommand : public Command {
+    Command* firstCmd;
+    Command* secondCmd;
+    JobsList* jobsList;
+public:
+    explicit PipeCommand(const char* cmd_line, JobsList* jobsList) :
+            Command(cmd_line), firstCmd(NULL), secondCmd(NULL),
+            jobsList(jobsList) {
+    };
+
+    virtual ~PipeCommand() {
+
+    }
+
+    void setFirstCmd(Command* first) {
+        firstCmd = first;
+    }
+
+    void setSecondCmd(Command* second) {
+        secondCmd = second;
+    }
+
+    void execute() override;
+};
+
 class JobsCommand : public BuiltInCommand {
     JobsList* jobsList;
 public:
@@ -272,6 +308,7 @@ public:
 
 // TODO: should it really inhirit from BuiltInCommand ?
 class CopyCommand : public BuiltInCommand {
+
 public:
     CopyCommand(const char* cmd_line);
 

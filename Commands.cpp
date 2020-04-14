@@ -75,6 +75,13 @@ int _parseCommandLine(const char* cmd_line, char** args) {
     FUNC_EXIT()
 }
 
+string getFirstArg(const char* cmd_line) {
+    std::istringstream iss(_trim(string(cmd_line)).c_str());
+    string s;
+    iss >> s;
+    return s;
+}
+
 bool _isBackgroundComamnd(const char* cmd_line) {
     const string str(cmd_line);
     return str[str.find_last_not_of(WHITESPACE)] == '&';
@@ -101,22 +108,33 @@ void _removeBackgroundSign(char* cmd_line) {
 ///Command functions:
 
 Command::Command(const char* cmd_line) : isBackground(false),
-                                         origCmd(cmd_line), pid(0) {
+                                         origCmd(cmd_line), pid(0),
+                                         redirected(false), piped(false),
+                                         stdOutCopy
+                                                 (1) {
     for (int i = 0; i < COMMAND_MAX_ARGS + 1; ++i) {
         args[i] = NULL;
     }
     isBackground = _isBackgroundComamnd(cmd_line);
+    IO_CHARS receivedType = containsSpecialChars();
+    type = receivedType;
+    if (receivedType == REDIR || receivedType == REDIR_APPEND) {
+        redirected = true;
+    }
+    if (receivedType == PIPE || receivedType == PIPE_ERR) {
+        piped = true;
+    }
     char without_amper[COMMAND_ARGS_MAX_LENGTH + 1];
     strcpy(without_amper, cmd_line);
     _removeBackgroundSign(without_amper);
     argsNum = _parseCommandLine(without_amper, args);
 }
 
-SPECIALCHARS Command::containsSpecialChars() const {
+IO_CHARS Command::containsSpecialChars() const {
     for (int i = 1; i < argsNum; i++) {
-        if (strcmp(args[i], "<") == 0) {
+        if (strcmp(args[i], ">") == 0) {
             return REDIR;
-        } else if (strcmp(args[i], "<<") == 0) {
+        } else if (strcmp(args[i], ">>") == 0) {
             return REDIR_APPEND;
         } else if (strcmp(args[i], "|") == 0) {
             return PIPE;
@@ -127,9 +145,10 @@ SPECIALCHARS Command::containsSpecialChars() const {
     return NONE;
 }
 
-int Command::setOutputFD(const char* path, SPECIALCHARS type) {
+void Command::setOutputFD(const char* path, IO_CHARS type) {
+    //TODO: should we handle empty/invalid path?
     if (type != REDIR && type != REDIR_APPEND) {
-        return 1;
+        return;
     }
     int stdoutCopy = dup(1);
     close(1);
@@ -138,7 +157,13 @@ int Command::setOutputFD(const char* path, SPECIALCHARS type) {
     } else { //must be REDIR_APPEND
         fopen(path, "a");
     }
-    return stdoutCopy;
+    stdOutCopy = stdoutCopy;
+}
+
+void Command::restoreStdOut() {
+    close(1);
+    dup2(stdOutCopy, 1);
+    close(stdOutCopy);
 }
 
 void ChangePrompt::execute() {
@@ -167,6 +192,7 @@ void ChangeDirCommand::execute() { // TODO: check what we should do if
     if (argsNum > 2) {
         cout << "smash error: cd: too many arguments" << endl;
     }
+    if (args[1] == NULL) return; //got only cd without path
     if (strcmp(args[1], "-") == 0 && *lastPwd == NULL) {
         cout << "smash error: cd: OLDPWD not set" << endl;
         return;
@@ -180,12 +206,13 @@ void ChangeDirCommand::execute() { // TODO: check what we should do if
     if (strcmp(args[1], "-") == 0) { // to go back to last pwd
         if (chdir(*lastPwd) == -1) {
             perror("smash error: chdir failed");
+            free(currPath);
             return;
         }
     } else { //if chdir arg is not "-"
-        //TODO : check if there is need to handle ".."
         if (chdir(args[1]) == -1) {
             perror("smash error: chdir failed");
+            free(currPath);
             return;
         }
     }
@@ -353,6 +380,9 @@ void ExternalCommand::execute() {
         return;
     }
     if (pid == 0) { // child process
+        if (isRedirected()) {
+            setOutputFD(getPath(), type); //has to be ">" // or ">>"
+        }
         setpgrp();
         execv("/bin/bash", bashArgs);
         perror("smash error: execv failed");
@@ -473,6 +503,7 @@ void JobsList::removeFinishedJobs() {
 }
 
 void JobsList::killAllJobs() {
+    //TODO: should print something if jobsList is empty???
     cout << "smash: sending SIGKILL signal to " << jobsList.size()
          << "jobs:" << endl;
     for (auto iter = jobsList.begin(); iter != jobsList.end();
@@ -516,75 +547,86 @@ SmallShell::~SmallShell() {
 Command* SmallShell::CreateCommand(const char* cmd_line) {
     string cmd_s = string(cmd_line);
     string cmd_trimmed = _trim(cmd_s);
-
+    string cmdOnly = getFirstArg(cmd_line);
     //find return The position of the first character of the first match
-    if (cmd_trimmed.find("pwd") == 0) {
+    if (cmd_trimmed.find('|') != string::npos) {
+        return new PipeCommand(cmd_line, &jobsList);
+    }
+    if (cmdOnly == "pwd") {
         return new GetCurrDirCommand(cmd_line);
     }
-    if (cmd_trimmed.find("chprompt") == 0) {
+    if (cmdOnly == "chprompt") {
         return new ChangePrompt(cmd_line, this);
     }
-    if (cmd_trimmed.find("showpid") == 0) {
+    if (cmdOnly == "showpid") {
         return new ShowPidCommand(cmd_line);
     }
-    if (cmd_trimmed.find("cd") == 0) {
+    if (cmdOnly == "cd") {
         return new ChangeDirCommand(cmd_line, &lastPwd);
     }
-    if (cmd_trimmed.find("jobs") == 0) {
+    if (cmdOnly == "jobs") {
         return new JobsCommand(cmd_line, &jobsList);
     }
-    if (cmd_trimmed.find("kill") == 0) {
+    if (cmdOnly == "kill") {
         return new KillCommand(cmd_line, &jobsList);
     }
-    if (cmd_trimmed.find("fg") == 0) {
+    if (cmdOnly == "fg") {
         return new ForegroundCommand(cmd_line, &jobsList);
     }
-    if (cmd_trimmed.find("bg") == 0) {
+    if (cmdOnly == "bg") {
         return new BackgroundCommand(cmd_line, &jobsList);
     }
-    if (cmd_trimmed.find("quit") == 0) {
+    if (cmdOnly == "quit") {
         return new QuitCommand(cmd_line, &jobsList, this);
     }
-    if (cmd_trimmed.find('|') != string::npos) {
-        return new PipeCommand(cmd_line);
-    }
-        //TODO: enter special commands here!!! before externals!!!
-
+        //TODO: enter cp here
     else { // External Cmds
         return new ExternalCommand(cmd_line, &jobsList);
     }
 }
 
 void SmallShell::executeCommand(const char* cmd_line) {
-    int stdoutCopy = 1;
     if (_trim(cmd_line).empty()) { //no cmd received, go get next cmd
         return;
     }     //TODO: ask if that what we should do in the piazza!
     Command* cmd = CreateCommand(cmd_line);
     // TODO: check if foreground/background
     jobsList.removeFinishedJobs();
-    SPECIALCHARS type = cmd->containsSpecialChars();
-    if (type == PIPE || type == PIPE_ERR) {
-        //TODO: split cmd_line to before and after '|'
-        //TODO: check if there '&' in the second command and if
-        // there is add & to the first cmd
-        //TODO: create both sub cmds
+    IO_CHARS cmdIOType = cmd->getType();
+    if (cmd->isPiped()) {
+        string stringCmd = (string) (cmd_line);
+        int pipeIndex = stringCmd.find('|');
+        string firstCmd = stringCmd.substr(0, pipeIndex);
+        string secondCmd;
+        if (cmdIOType == PIPE) { //TODO: verify staring location of
+            // second cmd , is it really pipeIndex + 1?
+            secondCmd = stringCmd.substr(pipeIndex + 1);
+        } else {//must be PIPE_ERR //TODO: verify also here (|&)
+            secondCmd = stringCmd.substr(pipeIndex + 2);
+        }
+        ((PipeCommand*) (cmd))->setFirstCmd( //converting to PipeCommand
+                // to access setCmds member functions
+                CreateCommand(firstCmd.c_str()));
+        ((PipeCommand*) (cmd))->setSecondCmd(
+                CreateCommand(secondCmd.c_str()));
         //TODO: exec each one
+        //TODO: check if there '&' in the second command and if
+        // there run pipe in background as new job and both subcommands
+        // should also run in the background without being in the jobsList
     }
-    if (type == REDIR || type == REDIR_APPEND) { // redirect stdout to the
-        // requested file
-        stdoutCopy = cmd->setOutputFD(cmd->getPath(), type);
+    if (dynamic_cast<BuiltInCommand*>(cmd) != NULL) {
+        if (cmd->isRedirected()) { // redirect stdout to the
+            // requested file
+            cmd->setOutputFD(cmd->getPath(), cmdIOType);
+        }
     }
     cmd->execute();
-    if (type == REDIR ||
-        type == REDIR_APPEND) { //restore stdout to channel 1 in FDT
-        close(1);
-        dup2(stdoutCopy, 1);
-        close(stdoutCopy);
-    }
     if (dynamic_cast<BuiltInCommand*>(cmd) != NULL) {//TODO: need to
         // think if there is another way to delete finished cmds which
         // are not in the jobsList
+        if (cmd->isRedirected()) { //restore stdout to channel 1 in FDT
+            cmd->restoreStdOut();
+        }
         delete cmd;
     }
 
