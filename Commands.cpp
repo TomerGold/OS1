@@ -213,6 +213,7 @@ void ChangeDirCommand::execute() { // TODO: check what we should do if
     // there is a & in the end of the given pwd
     if (argsNum > 2) {
         cout << "smash error: cd: too many arguments" << endl;
+        return;
     }
     if (args[1] == NULL) return; //got only cd without path
     if (strcmp(args[1], "-") == 0 && *lastPwd == NULL) {
