@@ -26,11 +26,11 @@ typedef enum {
 
 class Command {
 protected:
+    //TODO: change some to const (orig, args, pid, type, argsNum)
     string origCmd;
-    char* args[COMMAND_MAX_ARGS + 1]{};
+    char* args[COMMAND_MAX_ARGS + 1];
     int argsNum;
     bool isBackground;
-    pid_t pid;
     bool redirected;
     bool piped;
     IO_CHARS type;
@@ -57,10 +57,6 @@ public:
     }
 
     virtual void execute() = 0;
-
-    pid_t getPid() const {
-        return pid;
-    }
 
     IO_CHARS containsSpecialChars() const;
 
@@ -125,9 +121,10 @@ public:
 };
 
 class ShowPidCommand : public BuiltInCommand {
+    pid_t smashPid;
 public:
-    explicit ShowPidCommand(const char* cmd_line) : BuiltInCommand(
-            cmd_line) {
+    ShowPidCommand(const char* cmd_line, pid_t smashPid) : BuiltInCommand(
+            cmd_line), smashPid(smashPid) {
     };
 
     virtual ~ShowPidCommand() = default;
@@ -148,7 +145,7 @@ public:
 
         JobEntry(int jobId, int pid, Command* cmd, STATUS status) :
                 jobId(jobId), pid(pid), cmd(cmd), status(status),
-                startTime((time)(NULL)) {
+                startTime(time(NULL)) {
             if (startTime == (time_t) (-1)) {
                 perror("smash error: time failed");
             }
@@ -179,6 +176,13 @@ public:
         time_t getStartTime() const {
             return startTime;
         }
+
+        void setStartTimeNow() {
+            startTime = time(NULL);
+            if (startTime == (time_t) (-1)) {
+                perror("smash error: time failed");
+            }
+        }
     };
 
 private:
@@ -191,7 +195,7 @@ public:
 
     ~JobsList() = default;
 
-    void addJob(Command* cmd, bool isStopped = false);
+    void addJob(Command* cmd, pid_t pid, bool isStopped = false);
 
     void printJobsList();
 
