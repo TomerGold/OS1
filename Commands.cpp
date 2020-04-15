@@ -665,7 +665,6 @@ void JobsList::printJobsList() {
             return;
         }
         int elapsedTime = difftime(currTime, iter->getStartTime());
-        //TODO : check if it is ok to use int
         cout << "[" << iter->getJobId() << "] " <<
              iter->getCommand()->getOrigCmd() << " : " <<
              iter->getPid() << " " << elapsedTime << " secs";
