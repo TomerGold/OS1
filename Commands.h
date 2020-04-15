@@ -14,10 +14,11 @@ using std::ostream;
 using std::string;
 using std::list;
 
-bool sigSTPOn = false;
-bool sigINTOn = false;
-pid_t foregroundPid = 0;
-bool isForegroundPipe = false;
+extern bool sigSTPOn;
+extern bool sigINTOn;
+extern pid_t foregroundPid;
+extern bool isForegroundPipe;
+extern string defPrompt;
 
 typedef enum {
     RUNNING, STOPPED
@@ -30,7 +31,7 @@ class Command {
 protected:
     //TODO: change some to const (orig, args, pid, type, argsNum)
     string origCmd;
-    char* args[COMMAND_MAX_ARGS + 1];
+    char* args[COMMAND_MAX_ARGS + 1]; // TODO: make sure we make the strings const and not the pointer
     int argsNum;
     bool isBackground;
     bool redirected;
@@ -86,6 +87,9 @@ public:
 
     void restoreStdOut();
 
+    char* const * getArgs() const {
+        return args;
+    }
     //virtual void prepare();
     //virtual void cleanup();
     // TODO: Add your extra methods if needed
@@ -184,6 +188,10 @@ public:
             if (startTime == (time_t) (-1)) {
                 perror("smash error: time failed");
             }
+        }
+
+        bool operator==(const JobEntry& entry){
+            return jobId == entry.jobId;
         }
     };
 

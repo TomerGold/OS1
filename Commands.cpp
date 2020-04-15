@@ -4,12 +4,16 @@
 #include <vector>
 #include <sstream>
 #include <sys/wait.h>
+#include <fcntl.h>
 #include <iomanip>
 #include "Commands.h"
 
 using namespace std;
 
-#define DEFAULT_PROMPT "smash"
+pid_t foregroundPid = 0;
+bool isForegroundPipe = false;
+
+string defPrompt = "smash";
 
 const std::string WHITESPACE = " \n\r\t\f\v";
 
@@ -61,7 +65,6 @@ void handleInterruptedCmd(pid_t pid, Command* cmd,
         from the background, and now it's a zombie, so it will be
         deleted in the next removeFinished call*/
 
-        sigINTOn = false;
     } else if (sigSTPOn) { // if FG process received ctrl+z
         //TODO: handle pipe case - should stop external sub cmds
         if (currJob == NULL) { // wasn't foregrounded
@@ -70,7 +73,6 @@ void handleInterruptedCmd(pid_t pid, Command* cmd,
             currJob->setStatus(STOPPED);
             currJob->setStartTimeNow();
         }
-        sigSTPOn = false;
     }
     foregroundPid = 0;
 }
@@ -96,6 +98,9 @@ string getFirstArg(const char* cmd_line) {
     std::istringstream iss(_trim(string(cmd_line)).c_str());
     string s;
     iss >> s;
+    if (s.find('&')==(s.size() - 1)){
+        s.erase(s.size() - 1);
+    }
     return s;
 }
 
@@ -122,16 +127,22 @@ void _removeBackgroundSign(char* cmd_line) {
     cmd_line[str.find_last_not_of(WHITESPACE, idx) + 1] = 0;
 }
 
-string createExternCmd(char** args) {
-    string externCmd = "";
+char* createExternCmd(char*const * args) {
+    string externCmd;
     int i = 0;
     while (args[i] != NULL) { // TODO: check that makes a correct command
         // for bash
+        if(args[i][0] == '>') break;
         externCmd += args[i];
-        externCmd += " ";
+        if(args[i+1] != NULL) {
+            externCmd += " ";
+        }
         i++;
     }
-    return externCmd;
+    char* externCmdStr = (char*)malloc(externCmd.size()+1);
+    strcpy(externCmdStr,externCmd.c_str());
+    externCmdStr[externCmd.size()] = '\0';
+    return externCmdStr;
 }
 
 ///Command functions:
@@ -160,6 +171,7 @@ Command::Command(const char* cmd_line) : isBackground(false),
 
 IO_CHARS Command::containsSpecialChars() const {
     for (int i = 1; i < argsNum; i++) {
+        if(args[i]==NULL) break;
         if (strcmp(args[i], ">") == 0) {
             return REDIR;
         } else if (strcmp(args[i], ">>") == 0) {
@@ -198,7 +210,8 @@ void Command::restoreStdOut() {
 
 void ChangePrompt::execute() {
     if (args[1] == NULL) {
-        smallShell->setPrompt(DEFAULT_PROMPT);
+        smallShell->setPrompt(defPrompt);
+        return;
     }
     smallShell->setPrompt(args[1]);
 }
@@ -406,20 +419,26 @@ void QuitCommand::execute() {
 }
 
 void ExternalCommand::execute() {
-    string externCmd = createExternCmd(args);
-    const char* bashArgs[3] = {"bash", "-c", externCmd.c_str()};
     pid_t pid = fork();
     if (pid == -1) {
         perror("smash error: fork failed");
         return;
     }
     if (pid == 0) { // child process
+        //TODO: create a function to set bashArgs! and use it in wherever there is execv
+        char* externCmdStr = createExternCmd(args); //have to do this because of execv demands
+        char bash[5] = "bash";
+        bash[4] = '\0';
+        char cOption[3] = "-c";
+        cOption[2] = '\0';
+        char* const bashArgs[4] = {bash, cOption , externCmdStr , NULL};
         if (isRedirected()) {
             setOutputFD(getPath(), type); //has to be ">" // or ">>"
         }
         setpgrp();
         execv("/bin/bash", bashArgs);
         perror("smash error: execv failed");
+        free (externCmdStr);
         exit(0);
     } else { // smash process
         if (isBackgroundCmd()) {//should not wait and add to jobsList
@@ -449,15 +468,17 @@ void PipeCommand::execute() {
         // pipe sons. also need to handle this in smash handler
         int myPipe[2];
         pid_t sons[2] = {-1, -1};//TODO: change to define to NOTFORKED
-        const char* bashArgs[3] = {"bash", "-c", ""};
-        string externCmd;
+
+        char bash[5] = "bash";
+        bash[4] = '\0';
+        char cOption[3] = "-c";
+        cOption[2] = '\0';
+
         if (pipe(myPipe) == -1) { //creating pipe failed
             perror("smash error: pipe failed");
             return;
         }
         if (dynamic_cast<ExternalCommand*>(firstCmd) != NULL) {
-            externCmd = createExternCmd(args);
-            bashArgs[2] = externCmd.c_str();
             sons[0] = fork();
             if (sons[0] == -1) { //fork for firstCmd failed
                 perror("smash error: fork failed");
@@ -465,11 +486,14 @@ void PipeCommand::execute() {
             }
             if (sons[0] == 0) {//firstCmd
                 setpgrp();
+                char* externCmdStr = createExternCmd(firstCmd->getArgs()); //have to do this because of execv demands
+                char* const bashArgs[3] = {bash, cOption, externCmdStr};
                 close(1); //close stdout of forked firstCmd
                 dup(myPipe[1]); //dup pipe write to stdout in FDT
                 close(myPipe[1]); //close unused copy of pipe write
                 execv("/bin/bash", bashArgs);
                 perror("smash error: execv failed");
+                free(externCmdStr);
                 exit(0);
             } else {//Pipe process
                 close(myPipe[1]); //pipe process should not be writer
@@ -477,8 +501,6 @@ void PipeCommand::execute() {
             }
         }
         if (dynamic_cast<ExternalCommand*>(secondCmd) != NULL) {
-            externCmd = createExternCmd(args);
-            bashArgs[2] = externCmd.c_str();
             sons[1] = fork();
             if (sons[1] == -1) {
                 perror("smash error: fork failed");
@@ -486,11 +508,14 @@ void PipeCommand::execute() {
             }
             if (sons[1] == 0) {//secondCmd
                 setpgrp();
+                char* externCmdStr = createExternCmd(secondCmd->getArgs()); //have to do this because of execv demands
+                char* const bashArgs[3] = {bash, cOption, externCmdStr};
                 close(0);
                 dup(myPipe[0]);
                 close(myPipe[0]); //close unused copy of pipe read
                 execv("/bin/bash", bashArgs);
                 perror("smash error: execv failed");
+                free(externCmdStr);
                 exit(0);
             } else {//Pipe process
                 close(myPipe[0]);
@@ -639,7 +664,7 @@ void JobsList::printJobsList() {
             perror("smash error: time failed");
             return;
         }
-        int elapsedTime = difftime(iter->getStartTime(), currTime);
+        int elapsedTime = difftime(currTime, iter->getStartTime());
         //TODO : check if it is ok to use int
         cout << "[" << iter->getJobId() << "] " <<
              iter->getCommand()->getOrigCmd() << " : " <<
@@ -706,7 +731,7 @@ void JobsList::removeFinishedJobs() {
 
 void JobsList::killAllJobs() {
     cout << "smash: sending SIGKILL signal to " << jobsList.size()
-         << "jobs:" << endl;
+         << " jobs:" << endl;
     for (auto iter = jobsList.begin(); iter != jobsList.end();
          ++iter) {
         pid_t currPid = iter->getPid();
@@ -736,7 +761,7 @@ void JobsList::addJob(Command* cmd, pid_t pid, bool isStopped) {
 
 ///Smash functions:
 
-SmallShell::SmallShell() : prompt(DEFAULT_PROMPT), lastPwd(NULL),
+SmallShell::SmallShell() : prompt(defPrompt), lastPwd(NULL),
                            jobsList(), toQuit(false) {
 }
 
@@ -789,6 +814,7 @@ Command* SmallShell::CreateCommand(const char* cmd_line) {
 }
 
 void SmallShell::executeCommand(const char* cmd_line) {
+    bool isBuiltIn = false;
     if (_trim(cmd_line).empty()) { //no cmd received, go get next cmd
         return;
     }     //TODO: ask if that what we should do in the piazza!
@@ -813,13 +839,14 @@ void SmallShell::executeCommand(const char* cmd_line) {
                 CreateCommand(secondCmd.c_str()));
     }
     if (dynamic_cast<BuiltInCommand*>(cmd) != NULL) {
+        isBuiltIn = true;
         if (cmd->isRedirected()) { // redirect stdout to the
             // requested file
             cmd->setOutputFD(cmd->getPath(), cmdIOType);
         }
     }
     cmd->execute();
-    if (dynamic_cast<BuiltInCommand*>(cmd) != NULL) {//TODO: need to
+    if (isBuiltIn) {//TODO: need to
         // think if there is another way to delete finished cmds which
         // are not in the jobsList
         if (cmd->isRedirected()) { //restore stdout to channel 1 in FDT

@@ -5,6 +5,9 @@
 
 using namespace std;
 
+bool sigSTPOn = false;
+bool sigINTOn = false;
+
 void ctrlCHandler(int sig_num) {
     cout << "smash: got ctrl-C" << endl;
     //TODO: if there is no process in the foreground stop here!
@@ -14,7 +17,6 @@ void ctrlCHandler(int sig_num) {
     // rememeber to set isForegroundPipe to false after handling
     kill(foregroundPid, SIGKILL);
     cout << "smash: process " << foregroundPid << " was killed" << endl;
-    sigINTOn = true;
 }
 
 void ctrlZHandler(int sig_num) {
@@ -26,7 +28,6 @@ void ctrlZHandler(int sig_num) {
     // rememeber to set isForegroundPipe to false after handling
     kill(foregroundPid, SIGSTOP);
     cout << "smash: process " << foregroundPid << " was stopped" << endl;
-    sigSTPOn = true;
 }
 
 //TODO: do we need a handler to SIGCONT for a pipe?
