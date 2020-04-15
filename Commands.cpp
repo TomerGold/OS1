@@ -53,14 +53,18 @@ void handleInterruptedCmd(pid_t pid, Command* cmd,
     if (sigINTOn) { // if FG process received ctrl+c
         //TODO: handle pipe case - should call to function that will
         // clean up cmds 1 and 2 in the pipe
-        kill(pid, SIGKILL);
-        cout << "smash: process " << pid << " was killed" << endl;
+        if (currJob == NULL) {
+            delete cmd;
+        }
+
+        /*if job entry exists, that mean the process was foregrounded
+        from the background, and now it's a zombie, so it will be
+        deleted in the next removeFinished call*/
+
         sigINTOn = false;
     } else if (sigSTPOn) { // if FG process received ctrl+z
         //TODO: handle pipe case - should stop external sub cmds
-        kill(pid, SIGSTOP);
-        cout << "smash: process " << pid << " was stopped" << endl;
-        if (currJob == NULL) {
+        if (currJob == NULL) { // wasn't foregrounded
             jobsList->addJob(cmd, pid, true);
         } else {
             currJob->setStatus(STOPPED);
@@ -68,6 +72,7 @@ void handleInterruptedCmd(pid_t pid, Command* cmd,
         }
         sigSTPOn = false;
     }
+    foregroundPid = 0;
 }
 
 //converting the cmd string to cmd and options in the array args,
@@ -169,6 +174,9 @@ IO_CHARS Command::containsSpecialChars() const {
 }
 
 void Command::setOutputFD(const char* path, IO_CHARS type) {
+    //TODO: do we need to check return value of fopen? if yes, and on
+    // failure should do nothing remmember to handle this in external
+    // and cp execute, and in executeCommand (of built in redirection)
     if (type != REDIR && type != REDIR_APPEND) {
         return;
     }
@@ -276,6 +284,14 @@ void KillCommand::execute() {
         perror("smash error: kill failed");
         return;
     }
+    //TODO: make sure if we need to handle special signals as SIGSTOP
+    // and SIGCONT!
+    if (sigNum == SIGSTOP) {
+        toKill->setStatus(STOPPED);
+    }
+    if (sigNum == SIGCONT) { //TODO: make sure that we should do that
+        toKill->setStatus(RUNNING);
+    }
     cout << "signal number " << sigNum << " was sent to pid "
          << toKill->getPid() << endl;
 }
@@ -321,11 +337,14 @@ void ForegroundCommand::execute() {
         perror("smash error: kill failed");
         return;
     }
-    if (waitpid(toFGPid, NULL) == -1) { //was interrupted by signal
+    foregroundPid = toFGPid;
+    waitpid(toFGPid, NULL, WUNTRACED);
+    if (sigINTOn || sigSTPOn) { //was interrupted by signal
         handleInterruptedCmd(toFGPid, resumedCmd, toFG, jobsList);
     } else { //process finished successfully in foreground
         jobsList->removeJobById(jobId);
         delete resumedCmd; //TODO: should work but it's weakpoint
+        foregroundPid = 0;
     }
 }
 
@@ -401,15 +420,18 @@ void ExternalCommand::execute() {
         setpgrp();
         execv("/bin/bash", bashArgs);
         perror("smash error: execv failed");
-        //TODO: handle failure of execv!
+        exit(0);
     } else { // smash process
         if (isBackgroundCmd()) {//should not wait and add to jobsList
             jobsList->addJob(this, pid);
         } else {//should run in the foreground and wait for child to finish
-            if (waitpid(pid, NULL) == -1) {//was interrupted by a signal
+            foregroundPid = pid;
+            waitpid(pid, NULL, WUNTRACED);
+            if (sigINTOn || sigSTPOn) { // was interrupted by signal
                 handleInterruptedCmd(pid, this, NULL, jobsList);
-            } else { //process finished successfully in foreground
-                delete this; //TODO: should work but it's weakpoint
+            } else { // finished succesfully
+                delete this;
+                foregroundPid = 0;
             }
         }
     }
@@ -420,14 +442,16 @@ void PipeCommand::execute() {
     if (pipePid == -1) {
         perror("smash error: fork failed");
         return;
-    }
+    } //fork pipe failed
     if (pipePid == 0) {//Pipe process
         setpgrp();
+        //TODO: add signal independent pipe signal handler to stop/kill
+        // pipe sons. also need to handle this in smash handler
         int myPipe[2];
         pid_t sons[2] = {-1, -1};//TODO: change to define to NOTFORKED
         const char* bashArgs[3] = {"bash", "-c", ""};
         string externCmd;
-        if (pipe(myPipe) == -1) {
+        if (pipe(myPipe) == -1) { //creating pipe failed
             perror("smash error: pipe failed");
             return;
         }
@@ -435,17 +459,21 @@ void PipeCommand::execute() {
             externCmd = createExternCmd(args);
             bashArgs[2] = externCmd.c_str();
             sons[0] = fork();
-            if (sons[0] == -1) {
+            if (sons[0] == -1) { //fork for firstCmd failed
                 perror("smash error: fork failed");
                 return;
             }
             if (sons[0] == 0) {//firstCmd
                 setpgrp();
-                close(1);
-                dup(myPipe[1]);
+                close(1); //close stdout of forked firstCmd
+                dup(myPipe[1]); //dup pipe write to stdout in FDT
+                close(myPipe[1]); //close unused copy of pipe write
                 execv("/bin/bash", bashArgs);
                 perror("smash error: execv failed");
-                //TODO: handle failure of execv!
+                exit(0);
+            } else {//Pipe process
+                close(myPipe[1]); //pipe process should not be writer
+                // anymore
             }
         }
         if (dynamic_cast<ExternalCommand*>(secondCmd) != NULL) {
@@ -460,26 +488,53 @@ void PipeCommand::execute() {
                 setpgrp();
                 close(0);
                 dup(myPipe[0]);
+                close(myPipe[0]); //close unused copy of pipe read
                 execv("/bin/bash", bashArgs);
                 perror("smash error: execv failed");
-                //TODO: handle failure of execv!
+                exit(0);
+            } else {//Pipe process
+                close(myPipe[0]);
             }
         }
-        //TODO: run remaining built in processes e.g if 1st, 2nd are
-        // built in run them and arrange pipe
-        //TODO: if firstCmd - close stdout of cmd1 and dup myPipe[1].
-        // then restore stdout
-
         //TODO: make sure cp is handled right
+        //TODO: make sure cp process won't be parallel to pipe
 
-        //TODO: wait for any sons running and handle signals!!
+        /*from here on, only pipe process remains - externals/cp will end
+        in their execv */
+
+        if (sons[0] == -1) { // firstCmd must be built-in cmd
+            int stdOutCopy = dup(1); //save a copy of stdOut
+            close(1); // close stdOut of pipe process FDT!!
+            dup(myPipe[1]); // dup pipe write to stdout
+            close(myPipe[1]); // close unused copy of pipe write
+            firstCmd->execute();
+            delete firstCmd;
+            close(1); // close pipe write
+            dup2(stdOutCopy, 1); // restore stdout in the FDT
+            close(stdOutCopy); // close unused copy of stdout
+        }
+        if (sons[1] == -1) {// secondCmd must be built in
+            int stdInCopy = dup(0);
+            close(0);
+            dup(myPipe[0]);
+            close(myPipe[0]);
+            secondCmd->execute();
+            delete secondCmd;
+            close(0);
+            dup2(stdInCopy, 0);
+            close(stdInCopy);
+        }
+
+        //TODO: wait for any sons running and handle signals!! remmember
+        // to signal pipe process itself
 
         //TODO: think about when to delete sub cmds in pipe process
 
         //TODO : don't let pipe returning!!!!
 
     } else {//Smash process
-
+        isForegroundPipe = true;
+        foregroundPid = pipePid;
     }
     //TODO: smash point of view: if background add pipe to the jobList
     // and finish else, wait for it as in external (and check signals)
@@ -491,9 +546,69 @@ void PipeCommand::execute() {
     //TODO: think about when to delete sub cmds in smash process
 }
 
+void CopyCommand::execute() {
+    //TODO: check if there are 3 args, cmd, and two paths
+    pid_t cpPid = fork();
+    if (cpPid == 0) { //cp process
+        setpgrp();
+        if (isRedirected()) { //TODO: check if necessary
+            setOutputFD(getPath(), type); //has to be ">" // or ">>"
+        }
+        char buffer[1];
+        int fds[2];
+        size_t buf_size = 1;
+        ssize_t status;
+        fds[0] = open(args[1], O_RDONLY); //TODO: check this works
+        if (fds[0] == -1) {
+            perror("smash error: open failed");
+            exit(0);
+        }
+        fds[1] = open(args[2], O_WRONLY | O_CREAT | O_TRUNC, 0777);
+        //TODO: check mode thingy in last line
+        if (fds[1] == -1) {
+            perror("smash error: open failed");
+            close(fds[0]);
+            exit(0);
+        }
+        while ((status = read(fds[0], buffer, buf_size)) > 0) {
+            if ((write(fds[1], buffer, buf_size)) == -1) {
+                perror("smash error: write failed");
+                close(fds[0]);
+                close(fds[1]);
+                exit(0);
+            }
+        }
+        if (status == -1) {//read failed
+            perror("smash error: read failed");
+            close(fds[0]);
+            close(fds[1]);
+            exit(0);
+        }
+        close(fds[0]);
+        close(fds[1]);
+        cout << "smash: " << args[1] << " was copied to " << args[2] <<
+             endl;
+        exit(0);
+    } else {//smash process
+        if (isBackgroundCmd()) {//should not wait and add to jobsList
+            jobsList->addJob(this, cpPid);
+        } else {//should run in the foreground and wait for child to finish
+            foregroundPid = cpPid;
+            waitpid(cpPid, NULL, WUNTRACED);
+            if (sigINTOn || sigSTPOn) { // was interrupted by signal
+                handleInterruptedCmd(cpPid, this, NULL, jobsList);
+            } else { // finished succesfully
+                delete this;
+                foregroundPid = 0;
+            }
+        }
+    }
+
+}
+
 ///Jobs list functions:
 
-JobsList::JobsList() : maxId(0), jobsList(0) {
+JobsList::JobsList() : maxId(0), jobsList() {
 }
 
 JobsList::JobEntry* JobsList::getJobById(int jobId) {
@@ -575,8 +690,6 @@ JobsList::JobEntry* JobsList::getLastStoppedJob(int* jobId) {
 }
 
 void JobsList::removeFinishedJobs() {
-    //TODO: ask in the piazza what happens if proccess finished after
-    // passing it in the loop
     if (jobsList.empty()) return;
     auto iter = jobsList.begin();
     while (iter != jobsList.end()) {
@@ -635,7 +748,8 @@ SmallShell::~SmallShell() {
 Command* SmallShell::CreateCommand(const char* cmd_line) {
     string cmd_s = string(cmd_line);
     string cmd_trimmed = _trim(cmd_s);
-    string cmdOnly = getFirstArg(cmd_line);
+    string cmdOnly = getFirstArg(cmd_line); //TODO: verify getFirstArg
+    // works...
     //find return The position of the first character of the first match
     if (cmd_trimmed.find('|') != string::npos) {
         return new PipeCommand(cmd_line, &jobsList);
@@ -667,8 +781,9 @@ Command* SmallShell::CreateCommand(const char* cmd_line) {
     if (cmdOnly == "quit") {
         return new QuitCommand(cmd_line, &jobsList, this);
     }
-        //TODO: enter cp here
-    else { // External Cmds
+    if (cmdOnly == "cp") {
+        return new CopyCommand(cmd_line, &jobsList);
+    } else { // External Cmds
         return new ExternalCommand(cmd_line, &jobsList);
     }
 }
@@ -678,10 +793,9 @@ void SmallShell::executeCommand(const char* cmd_line) {
         return;
     }     //TODO: ask if that what we should do in the piazza!
     Command* cmd = CreateCommand(cmd_line);
-    // TODO: check if foreground/background
     jobsList.removeFinishedJobs();
     IO_CHARS cmdIOType = cmd->getType();
-    if (cmd->isPiped()) {
+    if (cmd->isPiped()) { //prepare sub cmds of the pipe
         string stringCmd = (string) (cmd_line);
         int pipeIndex = stringCmd.find('|');
         string firstCmd = stringCmd.substr(0, pipeIndex);
@@ -714,8 +828,6 @@ void SmallShell::executeCommand(const char* cmd_line) {
         delete cmd;
     }
 
-    // TODO: remember to delete external Command if foreground (not
-    //  joblisted)
     // Please note that you must fork smash process for some commands (e.g., external commands....)
 
 }

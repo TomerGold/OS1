@@ -16,6 +16,8 @@ using std::list;
 
 bool sigSTPOn = false;
 bool sigINTOn = false;
+pid_t foregroundPid = 0;
+bool isForegroundPipe = false;
 
 typedef enum {
     RUNNING, STOPPED
@@ -144,8 +146,8 @@ public:
     public:
 
         JobEntry(int jobId, int pid, Command* cmd, STATUS status) :
-                jobId(jobId), pid(pid), cmd(cmd), status(status),
-                startTime(time(NULL)) {
+                jobId(jobId), pid(pid), cmd(cmd), status(status) {
+            startTime = time(NULL);
             if (startTime == (time_t) (-1)) {
                 perror("smash error: time failed");
             }
@@ -221,10 +223,13 @@ public:
 };
 
 class ExternalCommand : public Command {
+protected:
     JobsList* jobsList;
+    bool isCpCmd;
 public:
     ExternalCommand(const char* cmd_line, JobsList*
-    jobs) : Command(cmd_line), jobsList(jobs) {
+    jobs, bool isCpCmd = false) : Command(cmd_line), jobsList(jobs),
+                                  isCpCmd(isCpCmd) {
     };
 
     virtual ~ExternalCommand() = default;
@@ -311,13 +316,13 @@ public:
 };
 
 // TODO: should it really inhirit from BuiltInCommand ?
-class CopyCommand : public BuiltInCommand {
-
+class CopyCommand : public ExternalCommand {
 public:
-    CopyCommand(const char* cmd_line);
+    CopyCommand(const char* cmd_line, JobsList* jobsList) :
+            ExternalCommand(cmd_line, jobsList, true) {
+    };
 
-    virtual ~CopyCommand() {
-    }
+    virtual ~CopyCommand() = default;
 
     void execute() override;
 };
