@@ -7,11 +7,14 @@
 #include <fcntl.h>
 #include <iomanip>
 #include "Commands.h"
+#include "signals.h"
 
 using namespace std;
 
 pid_t foregroundPid = 0;
 bool isForegroundPipe = false;
+pid_t pipeFirstCmdPid = NOT_FORKED;
+pid_t pipeSecondCmdPid = NOT_FORKED;
 
 string defPrompt = "smash";
 
@@ -32,6 +35,8 @@ const std::string WHITESPACE = " \n\r\t\f\v";
 
 #define EXEC(path, arg) \
   execvp((path), (arg));
+
+
 
 string _ltrim(const std::string& s) {
     size_t start = s.find_first_not_of(WHITESPACE);
@@ -55,26 +60,37 @@ void handleInterruptedCmd(pid_t pid, Command* cmd,
                           JobsList::JobEntry* currJob,
                           JobsList* jobsList) {
     if (sigINTOn) { // if FG process received ctrl+c
-        //TODO: handle pipe case - should call to function that will
-        // clean up cmds 1 and 2 in the pipe
         if (currJob == NULL) {
             delete cmd;
         }
+        sigINTOn = false;
 
         /*if job entry exists, that mean the process was foregrounded
         from the background, and now it's a zombie, so it will be
         deleted in the next removeFinished call*/
 
     } else if (sigSTPOn) { // if FG process received ctrl+z
-        //TODO: handle pipe case - should stop external sub cmds
         if (currJob == NULL) { // wasn't foregrounded
             jobsList->addJob(cmd, pid, true);
-        } else {
+        } else { // was foregrounded by fg command
             currJob->setStatus(STOPPED);
             currJob->setStartTimeNow();
         }
+        sigSTPOn = false;
     }
     foregroundPid = 0;
+    isForegroundPipe = false;
+}
+
+void handleInterruptedCmdPipe(Command* cmd) {
+
+    if (sigINTOn) { // pipe should delete sons cmds
+        sigINTOn = false;
+        delete cmd;
+        kill(getpid(), SIGKILL); //pipe commit suicide
+    }
+
+    //no need to handle SIGTSTP, it is handled in the signal handler in signals.cpp
 }
 
 //converting the cmd string to cmd and options in the array args,
@@ -145,6 +161,39 @@ char* createExternCmd(char*const * args) {
     return externCmdStr;
 }
 
+char** createBashArgs(char* const * args) {
+    char** bashArgs = (char**)malloc(4*sizeof(char*));
+    char* externCmdStr = createExternCmd(
+            args); //have to do this because of execv demands
+    char bash[5] = "bash";
+    bash[4] = '\0';
+    char cOption[3] = "-c";
+    cOption[2] = '\0';
+    bashArgs[0] = bash;
+    bashArgs[1] = cOption;
+    bashArgs[2] = externCmdStr;
+    bashArgs[3] = NULL;
+    return bashArgs;
+
+}
+
+void freeBashArgs(char** bashArgs) {
+    free(bashArgs[2]);
+    bashArgs[2] = NULL;
+    free(bashArgs);
+    bashArgs = NULL;
+}
+
+bool isArgumentExist(char** args, const string& toFind){
+    int i = 0;
+    while(args[i]!=NULL){
+        if(toFind == args[i]){
+            return true;
+        }
+        i++;
+    }
+    return false;
+}
 ///Command functions:
 
 Command::Command(const char* cmd_line) : isBackground(false),
@@ -272,7 +321,6 @@ void JobsCommand::execute() {
 }
 
 void KillCommand::execute() {
-    //TODO: check if after kill -9 job is removed from jobLists
     int sigNum = 0;
     int jobId = 0;
     try {
@@ -350,6 +398,7 @@ void ForegroundCommand::execute() {
         perror("smash error: kill failed");
         return;
     }
+    toFG->setStatus(RUNNING);
     foregroundPid = toFGPid;
     waitpid(toFGPid, NULL, WUNTRACED);
     if (sigINTOn || sigSTPOn) { //was interrupted by signal
@@ -410,28 +459,13 @@ void BackgroundCommand::execute() {
 
 void QuitCommand::execute() {
     if (argsNum > 1) {
-        if (strcmp(args[1], "kill") == 0) {//kill was specified
+        if (isArgumentExist(args, "kill")) {//kill was specified
             jobsList->killAllJobs();
         }
     }
     jobsList->destroyCmds();
     smash->setToQuit(true);
 }
-
-char** createBashArgs(char** args) {
-    char* externCmdStr = createExternCmd(
-            args); //have to do this because of execv demands
-    char bash[5] = "bash";
-    bash[4] = '\0';
-    char cOption[3] = "-c";
-    cOption[2] = '\0';
-}
-
-void freeBashArgs(char** bashArgs) {
-    free(bashArgs[2]);
-    free(bashArgs);
-}
-
 
 void ExternalCommand::execute() {
     pid_t pid = fork();
@@ -440,22 +474,14 @@ void ExternalCommand::execute() {
         return;
     }
     if (pid == 0) { // child process
-        //TODO: create a function to set bashArgs! and use it in wherever there is execv
-        char* externCmdStr = createExternCmd(
-                args); //have to do this because of execv demands
-        char bash[5] = "bash";
-        bash[4] = '\0';
-        char cOption[3] = "-c";
-        cOption[2] = '\0';
-        char** nonConstBashArgs = createBashArgs(args);
-        char* const* bashArgs = nonConstBashArgs;
+        char** bashArgs = createBashArgs(args);
         if (isRedirected()) {
             setOutputFD(getPath(), type); //has to be ">" // or ">>"
         }
         setpgrp();
         execv("/bin/bash", bashArgs);
         perror("smash error: execv failed");
-        freeBashArgs(nonConstBashArgs);
+        freeBashArgs(bashArgs);
         exit(0);
     } else { // smash process
         if (isBackgroundCmd()) {//should not wait and add to jobsList
@@ -465,7 +491,7 @@ void ExternalCommand::execute() {
             waitpid(pid, NULL, WUNTRACED);
             if (sigINTOn || sigSTPOn) { // was interrupted by signal
                 handleInterruptedCmd(pid, this, NULL, jobsList);
-            } else { // finished succesfully
+            } else { // finished successfully
                 delete this;
                 foregroundPid = 0;
             }
@@ -481,16 +507,26 @@ void PipeCommand::execute() {
     } //fork pipe failed
     if (pipePid == 0) {//Pipe process
         setpgrp();
-        //TODO: add signal independent pipe signal handler to stop/kill
-        // pipe sons. also need to handle this in smash handler
+        if(signal(SIGINT, pipeCtrlCHandler) == SIG_ERR) {
+            perror("smash error: failed to set pipe ctrl-C handler");
+            delete firstCmd;
+            delete secondCmd;
+            exit(0);
+        }
+        if(signal(SIGTSTP, pipeCtrlZHandler) == SIG_ERR) {
+            perror("smash error: failed to set pipe ctrl-Z handler");
+            delete firstCmd;
+            delete secondCmd;
+            exit(0);
+        }
+        if(signal(SIGCONT, pipeSigcontHandler) == SIG_ERR) {
+            perror("smash error: failed to set pipe SIGCONT handler");
+            delete firstCmd;
+            delete secondCmd;
+            exit(0);
+        }
         int myPipe[2];
-        pid_t sons[2] = {-1, -1};//TODO: change to define to NOTFORKED
-
-        char bash[5] = "bash";
-        bash[4] = '\0';
-        char cOption[3] = "-c";
-        cOption[2] = '\0';
-
+        pid_t sons[2] = {NOT_FORKED, NOT_FORKED};
         if (pipe(myPipe) == -1) { //creating pipe failed
             perror("smash error: pipe failed");
             return;
@@ -503,15 +539,57 @@ void PipeCommand::execute() {
             }
             if (sons[0] == 0) {//firstCmd
                 setpgrp();
-                char* externCmdStr = createExternCmd(firstCmd->getArgs()); //have to do this because of execv demands
-                char* const bashArgs[3] = {bash, cOption, externCmdStr};
                 close(1); //close stdout of forked firstCmd
                 dup(myPipe[1]); //dup pipe write to stdout in FDT
                 close(myPipe[1]); //close unused copy of pipe write
-                execv("/bin/bash", bashArgs);
-                perror("smash error: execv failed");
-                free(externCmdStr);
-                exit(0);
+                if(!(((ExternalCommand*)firstCmd)->isCp())) { //firstCmd external
+                    char **firstBashArgs = createBashArgs(firstCmd->getArgs());
+                    execv("/bin/bash", firstBashArgs);
+                    perror("smash error: execv failed");
+                    freeBashArgs(firstBashArgs);
+                    exit(0);
+                }
+                else{//firstCmd is cp command
+
+                    //TODO: in the end should be only one line calling to cpMain()
+                    char buffer[1];
+                    int fds[2];
+                    size_t buf_size = 1;
+                    ssize_t status;
+                    fds[0] = open(firstCmd->getArgs()[1], O_RDONLY);
+                    if (fds[0] == -1) {
+                        perror("smash error: open failed");
+                        exit(0);
+                    }
+                    fds[1] = open(firstCmd->getArgs()[2], O_WRONLY | O_CREAT | O_TRUNC, 0777);
+                    //TODO: check mode thingy in last line
+                    if (fds[1] == -1) {
+                        perror("smash error: open failed");
+                        close(fds[0]);
+                        exit(0);
+                    }
+                    while ((status = read(fds[0], buffer, buf_size)) > 0) {
+                        if ((write(fds[1], buffer, buf_size)) == -1) {
+                            perror("smash error: write failed");
+                            close(fds[0]);
+                            close(fds[1]);
+                            exit(0);
+                        }
+                    }
+                    if (status == -1) {//read failed
+                        perror("smash error: read failed");
+                        close(fds[0]);
+                        close(fds[1]);
+                        exit(0);
+                    }
+                    close(fds[0]);
+                    close(fds[1]);
+                    cout << "smash: " << firstCmd->getArgs()[1] << " was copied to " << firstCmd->getArgs()[2] <<
+                         endl;
+                    exit(0);
+
+
+                }
             } else {//Pipe process
                 close(myPipe[1]); //pipe process should not be writer
                 // anymore
@@ -525,67 +603,115 @@ void PipeCommand::execute() {
             }
             if (sons[1] == 0) {//secondCmd
                 setpgrp();
-                char* externCmdStr = createExternCmd(secondCmd->getArgs()); //have to do this because of execv demands
-                char* const bashArgs[3] = {bash, cOption, externCmdStr};
                 close(0);
                 dup(myPipe[0]);
                 close(myPipe[0]); //close unused copy of pipe read
-                execv("/bin/bash", bashArgs);
-                perror("smash error: execv failed");
-                free(externCmdStr);
-                exit(0);
+                if(!(((ExternalCommand*)secondCmd)->isCp())) { //secondCmd external
+                    char** secondBashArgs = createBashArgs(secondCmd->getArgs());
+                    execv("/bin/bash", secondBashArgs);
+                    perror("smash error: execv failed");
+                    freeBashArgs(secondBashArgs);
+                    exit(0);
+                }
+                else{//secondCmd is cp command
+
+                    //TODO: in the end should be only one line calling to cpMain()
+                    char buffer[1];
+                    int fds[2];
+                    size_t buf_size = 1;
+                    ssize_t status;
+                    fds[0] = open(secondCmd->getArgs()[1], O_RDONLY);
+                    if (fds[0] == -1) {
+                        perror("smash error: open failed");
+                        exit(0);
+                    }
+                    fds[1] = open(secondCmd->getArgs()[2], O_WRONLY | O_CREAT | O_TRUNC, 0777);
+                    //TODO: check mode thingy in last line
+                    if (fds[1] == -1) {
+                        perror("smash error: open failed");
+                        close(fds[0]);
+                        exit(0);
+                    }
+                    while ((status = read(fds[0], buffer, buf_size)) > 0) {
+                        if ((write(fds[1], buffer, buf_size)) == -1) {
+                            perror("smash error: write failed");
+                            close(fds[0]);
+                            close(fds[1]);
+                            exit(0);
+                        }
+                    }
+                    if (status == -1) {//read failed
+                        perror("smash error: read failed");
+                        close(fds[0]);
+                        close(fds[1]);
+                        exit(0);
+                    }
+                    close(fds[0]);
+                    close(fds[1]);
+                    cout << "smash: " << secondCmd->getArgs()[1] << " was copied to " << secondCmd->getArgs()[2] <<
+                         endl;
+                    exit(0);
+
+
+                }
             } else {//Pipe process
                 close(myPipe[0]);
             }
         }
-        //TODO: make sure cp is handled right
-        //TODO: make sure cp process won't be parallel to pipe
 
         /*from here on, only pipe process remains - externals/cp will end
-        in their execv */
+        in their execv/copy stuff */
 
-        if (sons[0] == -1) { // firstCmd must be built-in cmd
+        if (sons[0] == NOT_FORKED) { // firstCmd must be built-in cmd
             int stdOutCopy = dup(1); //save a copy of stdOut
             close(1); // close stdOut of pipe process FDT!!
             dup(myPipe[1]); // dup pipe write to stdout
             close(myPipe[1]); // close unused copy of pipe write
             firstCmd->execute();
-            delete firstCmd;
             close(1); // close pipe write
             dup2(stdOutCopy, 1); // restore stdout in the FDT
             close(stdOutCopy); // close unused copy of stdout
         }
-        if (sons[1] == -1) {// secondCmd must be built in
+        if (sons[1] == NOT_FORKED) {// secondCmd must be built in
             int stdInCopy = dup(0);
             close(0);
             dup(myPipe[0]);
             close(myPipe[0]);
             secondCmd->execute();
-            delete secondCmd;
             close(0);
             dup2(stdInCopy, 0);
             close(stdInCopy);
         }
-
-        //TODO: wait for any sons running and handle signals!! remmember
-        // to signal pipe process itself
-
-        //TODO: think about when to delete sub cmds in pipe process
-
-        //TODO : don't let pipe returning!!!!
-
+        pipeFirstCmdPid = sons[0];
+        pipeSecondCmdPid = sons[1];
+        while(waitpid(-1, NULL, WUNTRACED) != -1); //TODO: make sure this waits properly to any sons existing
+        if(sigINTOn){//wait was interrupted by SIGINT, won't get here if got SIGTSTP!
+            handleInterruptedCmdPipe(this);
+        }
+        else{//sons finished successfully should finish pipe as well
+            delete this;
+            exit(0);
+        }
     } else {//Smash process
-        isForegroundPipe = true;
-        foregroundPid = pipePid;
+        if(isBackgroundCmd()){//pipe runs in the background
+            jobsList->addJob(this, pipePid);
+        }
+        else {//pipe runs in the foreground, wait for it and handle signals
+            isForegroundPipe = true;
+            foregroundPid = pipePid;
+            waitpid(pipePid, NULL, WUNTRACED);
+            if (sigINTOn || sigSTPOn) { // was interrupted by signal
+                handleInterruptedCmd(pipePid, this, NULL, jobsList);
+            } else { // finished successfully
+                delete this;
+                isForegroundPipe = false;
+                foregroundPid = 0;
+            }
+        }
     }
-    //TODO: smash point of view: if background add pipe to the jobList
-    // and finish else, wait for it as in external (and check signals)
-    // and pass them to pipe if needed
 
     //TODO: if were in the case of '|&' close and dup to stderr - change
     // hardcoded close and dups
-
-    //TODO: think about when to delete sub cmds in smash process
 }
 
 void CopyCommand::execute() {
@@ -596,11 +722,13 @@ void CopyCommand::execute() {
         if (isRedirected()) { //TODO: check if necessary
             setOutputFD(getPath(), type); //has to be ">" // or ">>"
         }
+
+        //TODO: extract all of this till exit(0) to function cpMain()
         char buffer[1];
         int fds[2];
         size_t buf_size = 1;
         ssize_t status;
-        fds[0] = open(args[1], O_RDONLY); //TODO: check this works
+        fds[0] = open(args[1], O_RDONLY);
         if (fds[0] == -1) {
             perror("smash error: open failed");
             exit(0);
@@ -631,6 +759,8 @@ void CopyCommand::execute() {
         cout << "smash: " << args[1] << " was copied to " << args[2] <<
              endl;
         exit(0);
+
+
     } else {//smash process
         if (isBackgroundCmd()) {//should not wait and add to jobsList
             jobsList->addJob(this, cpPid);

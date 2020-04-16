@@ -10,6 +10,7 @@ using std::ostream;
 
 #define COMMAND_ARGS_MAX_LENGTH (200)
 #define COMMAND_MAX_ARGS (20)
+#define NOT_FORKED (-1)
 
 using std::string;
 using std::list;
@@ -19,6 +20,8 @@ extern bool sigINTOn;
 extern pid_t foregroundPid;
 extern bool isForegroundPipe;
 extern string defPrompt;
+extern pid_t pipeFirstCmdPid;
+extern pid_t pipeSecondCmdPid;
 
 typedef enum {
     RUNNING, STOPPED
@@ -243,6 +246,10 @@ public:
     virtual ~ExternalCommand() = default;
 
     void execute() override;
+
+    bool isCp() const{
+        return isCpCmd;
+    }
 };
 
 class PipeCommand : public Command {
@@ -256,7 +263,8 @@ public:
     };
 
     virtual ~PipeCommand() {
-
+        delete firstCmd;
+        delete secondCmd;
     }
 
     void setFirstCmd(Command* first) {
@@ -323,7 +331,6 @@ public:
     void execute() override;
 };
 
-// TODO: should it really inhirit from BuiltInCommand ?
 class CopyCommand : public ExternalCommand {
 public:
     CopyCommand(const char* cmd_line, JobsList* jobsList) :
