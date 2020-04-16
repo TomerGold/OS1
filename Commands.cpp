@@ -418,6 +418,21 @@ void QuitCommand::execute() {
     smash->setToQuit(true);
 }
 
+char** createBashArgs(char** args) {
+    char* externCmdStr = createExternCmd(
+            args); //have to do this because of execv demands
+    char bash[5] = "bash";
+    bash[4] = '\0';
+    char cOption[3] = "-c";
+    cOption[2] = '\0';
+}
+
+void freeBashArgs(char** bashArgs) {
+    free(bashArgs[2]);
+    free(bashArgs);
+}
+
+
 void ExternalCommand::execute() {
     pid_t pid = fork();
     if (pid == -1) {
@@ -426,19 +441,21 @@ void ExternalCommand::execute() {
     }
     if (pid == 0) { // child process
         //TODO: create a function to set bashArgs! and use it in wherever there is execv
-        char* externCmdStr = createExternCmd(args); //have to do this because of execv demands
+        char* externCmdStr = createExternCmd(
+                args); //have to do this because of execv demands
         char bash[5] = "bash";
         bash[4] = '\0';
         char cOption[3] = "-c";
         cOption[2] = '\0';
-        char* const bashArgs[4] = {bash, cOption , externCmdStr , NULL};
+        char** nonConstBashArgs = createBashArgs(args);
+        char* const* bashArgs = nonConstBashArgs;
         if (isRedirected()) {
             setOutputFD(getPath(), type); //has to be ">" // or ">>"
         }
         setpgrp();
         execv("/bin/bash", bashArgs);
         perror("smash error: execv failed");
-        free (externCmdStr);
+        freeBashArgs(nonConstBashArgs);
         exit(0);
     } else { // smash process
         if (isBackgroundCmd()) {//should not wait and add to jobsList
