@@ -36,10 +36,10 @@ typedef enum {
 class Command {
 protected:
     //TODO: change some to const (orig, args, pid, type, argsNum)
+    bool isBackground;
     string origCmd;
     char* args[COMMAND_MAX_ARGS + 1]; // TODO: make sure we make the strings const and not the pointer
     int argsNum;
-    bool isBackground;
     bool redirected;
     bool piped;
     IO_CHARS type;

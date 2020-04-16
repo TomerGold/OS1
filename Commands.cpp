@@ -61,6 +61,9 @@ void handleInterruptedCmd(pid_t pid, Command *cmd,
     if (sigINTOn) { // if FG process received ctrl+c
         if (currJob == NULL) {
             delete cmd;
+        } else {
+            delete cmd;
+            jobsList->removeJobById(currJob->getJobId());
         }
         sigINTOn = false;
 
@@ -164,10 +167,10 @@ char **createBashArgs(char *const *args) {
     char **bashArgs = (char **) malloc(4 * sizeof(char *));
     char *externCmdStr = createExternCmd(
             args); //have to do this because of execv demands
-    char *bash = (char *) malloc(5 * sizeof(char));
-    string bashStr = "bash";
+    char *bash = (char *) malloc(10 * sizeof(char));
+    string bashStr = "/bin/bash";
     strcpy(bash, bashStr.c_str());
-    bash[4] = '\0';
+    bash[9] = '\0';
 
     char *cOption = (char *) malloc(3 * sizeof(char));
     string cOptionStr = "-c";
@@ -609,6 +612,7 @@ void PipeCommand::execute() {
             if (sons[0] == 0) {//firstCmd
                 setpgrp();
                 pipeManageFD(OUT, myPipe[1], type); //close stdout of forked firstCmd and dup pipe write to stdout
+                close(myPipe[0]);
                 if (!(((ExternalCommand *) firstCmd)->isCp())) { //firstCmd external
                     char **firstBashArgs = createBashArgs(firstCmd->getArgs());
                     execv("/bin/bash", firstBashArgs);
@@ -632,6 +636,7 @@ void PipeCommand::execute() {
             if (sons[1] == 0) {//secondCmd
                 setpgrp();
                 pipeManageFD(IN, myPipe[0], type); //close unused copy of pipe read
+                close(myPipe[1]);
                 if (!(((ExternalCommand *) secondCmd)->isCp())) { //secondCmd external
                     char **secondBashArgs = createBashArgs(secondCmd->getArgs());
                     execv("/bin/bash", secondBashArgs);
