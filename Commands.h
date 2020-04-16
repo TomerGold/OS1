@@ -29,6 +29,9 @@ typedef enum {
 typedef enum {
     REDIR, REDIR_APPEND, PIPE, PIPE_ERR, NONE
 } IO_CHARS;
+typedef enum {
+    IN, OUT
+} FDT_CHANNEL;
 
 class Command {
 protected:
@@ -93,9 +96,6 @@ public:
     char* const * getArgs() const {
         return args;
     }
-    //virtual void prepare();
-    //virtual void cleanup();
-    // TODO: Add your extra methods if needed
 };
 
 class BuiltInCommand : public Command {
@@ -343,11 +343,9 @@ public:
 };
 
 // TODO: add more classes if needed maybe timeout ?
-//
 
 class SmallShell {
 private:
-    // TODO: Add your data members
     SmallShell();
 
     string prompt;
@@ -389,7 +387,6 @@ public:
     ~SmallShell();
 
     void executeCommand(const char* cmd_line);
-    // TODO: add extra methods as needed
 };
 
 class ChangePrompt : public BuiltInCommand {
@@ -424,7 +421,6 @@ public:
 
 //TODO: consider deleting this class
 //class RedirectionCommand : public Command {
-//    // TODO: Add your data members
 //public:
 //    explicit RedirectionCommand(const char* cmd_line);
 //
@@ -434,25 +430,4 @@ public:
 //    void execute() override;
 //    //void prepare() override;
 //    //void cleanup() override;
-//};
-
-//class CommandsHistory {
-//protected:
-//    class CommandHistoryEntry {
-//        // TODO: Add your data members
-//    };
-//    // TODO: Add your data members
-//public:
-//    CommandsHistory();
-//    ~CommandsHistory() {}
-//    void addRecord(const char* cmd_line);
-//    void printHistory();
-//};
-//
-//class HistoryCommand : public BuiltInCommand {
-//    // TODO: Add your data members
-//public:
-//    HistoryCommand(const char* cmd_line, CommandsHistory* history);
-//    virtual ~HistoryCommand() {}
-//    void execute() override;
 //};
