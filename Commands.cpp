@@ -110,6 +110,7 @@ int _parseCommandLine(const char *cmd_line, char **args) {
 }
 
 string getFirstArg(const char *cmd_line) {
+    //TODO: should we handle connected redirection cmd like cmd>txt.1
     std::istringstream iss(_trim(string(cmd_line)).c_str());
     string s;
     iss >> s;
@@ -163,23 +164,29 @@ char **createBashArgs(char *const *args) {
     char **bashArgs = (char **) malloc(4 * sizeof(char *));
     char *externCmdStr = createExternCmd(
             args); //have to do this because of execv demands
-    char bash[5] = "bash";
+    char *bash = (char *) malloc(5 * sizeof(char));
+    string bashStr = "bash";
+    strcpy(bash, bashStr.c_str());
     bash[4] = '\0';
-    char cOption[3] = "-c";
+
+    char *cOption = (char *) malloc(3 * sizeof(char));
+    string cOptionStr = "-c";
+    strcpy(cOption, cOptionStr.c_str());
     cOption[2] = '\0';
+
     bashArgs[0] = bash;
     bashArgs[1] = cOption;
     bashArgs[2] = externCmdStr;
     bashArgs[3] = NULL;
     return bashArgs;
-
 }
 
 void freeBashArgs(char **bashArgs) {
-    free(bashArgs[2]);
-    bashArgs[2] = NULL;
+    for (int i = 0; i < 3; i++) {
+        free(bashArgs[i]);
+    }
     free(bashArgs);
-    bashArgs = NULL;
+    *bashArgs = NULL;
 }
 
 void pipeManageFD(FDT_CHANNEL FDToCLose, int newFD, IO_CHARS pipeType) {
