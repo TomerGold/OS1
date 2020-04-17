@@ -193,32 +193,31 @@ void freeBashArgs(char **bashArgs) {
 }
 
 void pipeManageFD(FDT_CHANNEL FDToCLose, int newFD, IO_CHARS pipeType) {
-    bool failed = false;
     if (FDToCLose == IN) {
         if (close(0) == -1) { // should close stdin
             perror("smash error: close failed");
-            failed = true;
+            exit(0);
         }
     } else if (pipeType == PIPE) { //should close stdout
         if (close(1) == -1) {
             perror("smash error: close failed");
-            failed = true;
+            exit(0);
         }
     } else { // should close stderr
         if (close(2) == -1) {
             perror("smash error: close failed");
-            failed = true;
+            exit(0);
         }
     }
     if (dup(newFD) == -1) {
         perror("smash error: dup failed");
-        failed = true;
+        exit(0);
     }
     if (close(newFD) == -1) {
         perror("smash error: close failed");
-        failed = true;
+        exit(0);
     }
-    if (failed) exit(0); // TODO: make sure this is ok to just exit pipe in case of built in cmds
+    // TODO: make sure this is ok to just exit pipe in case of built in cmds
 }
 
 bool isArgumentExist(char **args, const string &toFind) {
@@ -622,13 +621,13 @@ void PipeCommand::execute() {
         pid_t sons[2] = {NOT_FORKED, NOT_FORKED};
         if (pipe(myPipe) == -1) { //creating pipe failed
             perror("smash error: pipe failed");
-            return;
+            exit(0);
         }
         if (dynamic_cast<ExternalCommand *>(firstCmd) != NULL) {
             sons[0] = fork();
             if (sons[0] == -1) { //fork for firstCmd failed
                 perror("smash error: fork failed");
-                return;
+                exit(0);
             }
             if (sons[0] == 0) {//firstCmd
                 setpgrp();
@@ -652,7 +651,7 @@ void PipeCommand::execute() {
             sons[1] = fork();
             if (sons[1] == -1) {
                 perror("smash error: fork failed");
-                return;
+                exit(0);
             }
             if (sons[1] == 0) {//secondCmd
                 setpgrp();
