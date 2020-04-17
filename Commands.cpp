@@ -587,6 +587,7 @@ void ExternalCommand::execute() {
 }
 
 void PipeCommand::execute() {
+    bool isFirstCmdExternal = dynamic_cast<ExternalCommand *>(firstCmd) == NULL ? false : true;
     pid_t pipePid = fork();
     if (pipePid == -1) {
         perror("smash error: fork failed");
@@ -618,7 +619,7 @@ void PipeCommand::execute() {
             perror("smash error: pipe failed");
             exit(0);
         }
-        if (dynamic_cast<ExternalCommand *>(firstCmd) != NULL) {
+        if (isFirstCmdExternal) {
             sons[0] = fork();
             if (sons[0] == -1) { //fork for firstCmd failed
                 perror("smash error: fork failed");
@@ -651,6 +652,9 @@ void PipeCommand::execute() {
             if (sons[1] == 0) {//secondCmd
                 setpgrp();
                 pipeManageFD(IN, myPipe[0], type); //close unused copy of pipe read
+                if (!isFirstCmdExternal) {
+                    close(myPipe[1]);
+                }
                 if (!(((ExternalCommand *) secondCmd)->isCp())) { //secondCmd external
                     char **secondBashArgs = createBashArgs(secondCmd->getArgs());
                     execv("/bin/bash", secondBashArgs);
