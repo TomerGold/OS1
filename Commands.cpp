@@ -233,6 +233,11 @@ bool isArgumentExist(char **args, const string &toFind) {
 }
 
 void cpMain(char *const *args) {
+    if (strcmp(args[1], args[2]) == 0) {
+        cout << "smash: " << args[1] << " was copied to " << args[2] <<
+             endl;
+        exit(0);
+    }
     char buffer[1];
     int fds[2];
     size_t buf_size = 1;
@@ -446,10 +451,6 @@ void ForegroundCommand::execute() {
             cout << "smash error: fg: invalid arguments" << endl;
             return;
         }
-        if (jobId < 1) { // jobId is invalid
-            cout << "smash error: fg: invalid arguments" << endl;
-            return;
-        }
         toFG = jobsList->getJobById(jobId);
         if (toFG == NULL) { // if requested jobId doesn't exist
             cout << "smash error: fg: job-id " << jobId
@@ -500,10 +501,6 @@ void BackgroundCommand::execute() {
             jobId = stoi(args[1]);
         }
         catch (const std::exception &e) { // if jobId is not a number
-            cout << "smash error: bg: invalid arguments" << endl;
-            return;
-        }
-        if (jobId < 1) { // jobId is invalid
             cout << "smash error: bg: invalid arguments" << endl;
             return;
         }
