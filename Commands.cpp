@@ -472,6 +472,9 @@ void ForegroundCommand::execute() {
     }
     toFG->setStatus(RUNNING);
     foregroundPid = toFGPid;
+    if (toFG->getCommand()->isPiped()) {
+        isForegroundPipe = true;
+    }
     waitpid(toFGPid, NULL, WUNTRACED);
     if (sigINTOn || sigSTPOn) { //was interrupted by signal
         handleInterruptedCmd(toFGPid, resumedCmd, toFG, jobsList);
@@ -479,7 +482,9 @@ void ForegroundCommand::execute() {
         jobsList->removeJobById(jobId); // could also not remove and wait for removal in removeFinshedJobs
         delete resumedCmd;
         foregroundPid = 0;
+        isForegroundPipe = false;
     }
+
 }
 
 void BackgroundCommand::execute() {
@@ -636,7 +641,6 @@ void PipeCommand::execute() {
             if (sons[1] == 0) {//secondCmd
                 setpgrp();
                 pipeManageFD(IN, myPipe[0], type); //close unused copy of pipe read
-                close(myPipe[1]);
                 if (!(((ExternalCommand *) secondCmd)->isCp())) { //secondCmd external
                     char **secondBashArgs = createBashArgs(secondCmd->getArgs());
                     execv("/bin/bash", secondBashArgs);
@@ -666,7 +670,7 @@ void PipeCommand::execute() {
         }
         pipeFirstCmdPid = sons[0];
         pipeSecondCmdPid = sons[1];
-        while (waitpid(-1, NULL, WUNTRACED) != -1); //TODO: make sure this waits properly to any sons existing
+        while (wait(NULL) != -1); //TODO: make sure this waits properly to any sons existing
         if (sigINTOn) {//wait was interrupted by SIGINT, won't get here if got SIGTSTP!
             handleInterruptedCmdPipe(this);
         } else {//sons finished successfully should finish pipe as well

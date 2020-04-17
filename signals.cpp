@@ -67,7 +67,7 @@ void pipeSigcontHandler(int sig_num){
     if(pipeSecondCmdPid != NOT_FORKED){
         kill(pipeSecondCmdPid, SIGCONT);
     }
-    kill(getpid(), SIGCONT);
+
     /*after this, pipe should restart the waitpid in the pipe execute
      * to wait for his sons that have been already continued until they finish
      * or until the next signal interrupt*/
