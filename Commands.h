@@ -69,7 +69,7 @@ public:
 
     IO_CHARS containsSpecialChars() const;
 
-    void setOutputFD(const char* path, IO_CHARS type);
+    bool setOutputFD(const char *path, IO_CHARS type);
 
     bool isRedirected() const {
         return redirected;

@@ -314,24 +314,41 @@ IO_CHARS Command::containsSpecialChars() const {
     return NONE;
 }
 
-void Command::setOutputFD(const char *path, IO_CHARS type) {
+bool Command::setOutputFD(const char *path, IO_CHARS type) {
     //TODO: do we need to check return value of fopen? if yes, and on
     // failure should do nothing remember to handle this in external
     // and cp execute, and in executeCommand (of built in redirection)
     if (type != REDIR && type != REDIR_APPEND) {
-        return;
+        return true;
     }
-    int stdoutCopy = dup(1);
-    close(1);
+    stdOutCopy = dup(1);
+    if (stdOutCopy == -1) {
+        perror("smash error: dup failed");
+        return false;
+    }
+    if (close(1) == -1) {
+        perror("smash error: close failed");
+        return false;
+    }
     if (type == REDIR) {
-        fopen(path, "w");
+        if (fopen(path, "w") == NULL) {
+            perror("smash error: open failed");
+            return false;
+        }
     } else { //must be REDIR_APPEND
-        fopen(path, "a");
+        if (fopen(path, "a") == NULL) {
+            perror("smash error: open failed");
+            return false;
+        }
     }
-    stdOutCopy = stdoutCopy;
+    return true;
 }
 
 void Command::restoreStdOut() {
+    if (stdOutCopy == -1) {
+        return;
+    }
+    //TODO: what happens if something fails here?!
     close(1);
     dup2(stdOutCopy, 1);
     close(stdOutCopy);
@@ -550,7 +567,9 @@ void ExternalCommand::execute() {
     if (pid == 0) { // child process
         char **bashArgs = createBashArgs(args);
         if (isRedirected()) {
-            setOutputFD(getPath(), type); //has to be ">" // or ">>"
+            if (!(setOutputFD(getPath(), type))) { //has to be ">" // or ">>"
+                exit(0);
+            }
         }
         setpgrp();
         execv("/bin/bash", bashArgs);
@@ -698,7 +717,9 @@ void CopyCommand::execute() {
     if (cpPid == 0) { //cp process
         setpgrp();
         if (isRedirected()) { //TODO: check if necessary
-            setOutputFD(getPath(), type); //has to be ">" // or ">>"
+            if (!(setOutputFD(getPath(), type))) { //has to be ">" // or ">>"
+                exit(0);
+            }
         }
         cpMain(args);
     } else {//smash process
@@ -899,7 +920,7 @@ Command *SmallShell::CreateCommand(const char *cmd_line) {
 }
 
 void SmallShell::executeCommand(const char *cmd_line) {
-    bool isBuiltIn = false;
+    bool isBuiltIn = false, redirectedSuccess = true;
     if (_trim(cmd_line).empty()) { //no cmd received, go get next cmd
         return;
     }     //TODO: ask if that what we should do in the piazza!
@@ -927,10 +948,19 @@ void SmallShell::executeCommand(const char *cmd_line) {
         isBuiltIn = true;
         if (cmd->isRedirected()) { // redirect stdout to the
             // requested file
-            cmd->setOutputFD(cmd->getPath(), cmdIOType);
+            if (!(cmd->setOutputFD(cmd->getPath(), cmdIOType))) {
+                redirectedSuccess = false;
+            }
         }
     }
-    cmd->execute();
+    if (dynamic_cast<BuiltInCommand *>(cmd) != NULL) { // if built in
+        if (redirectedSuccess) { //execute if not redirected (because set to true by default) or
+            // if redirected cmd and was redirect successfully
+            cmd->execute();
+        }
+    } else { //not built in so execute anyhow
+        cmd->execute();
+    }
     if (isBuiltIn) {
         if (cmd->isRedirected()) { //restore stdout to channel 1 in FDT
             cmd->restoreStdOut();
