@@ -248,7 +248,6 @@ void cpMain(char *const *args) {
         exit(0);
     }
     fds[1] = open(args[2], O_WRONLY | O_CREAT | O_TRUNC, 0666);
-    //TODO: check mode thingy in last line
     if (fds[1] == -1) {
         perror("smash error: open failed");
         close(fds[0]);
@@ -315,9 +314,6 @@ IO_CHARS Command::containsSpecialChars() const {
 }
 
 bool Command::setOutputFD(const char *path, IO_CHARS type) {
-    //TODO: do we need to check return value of fopen? if yes, and on
-    // failure should do nothing remember to handle this in external
-    // and cp execute, and in executeCommand (of built in redirection)
     if (type != REDIR && type != REDIR_APPEND) {
         return true;
     }
@@ -443,7 +439,7 @@ void KillCommand::execute() {
     if (sigNum == SIGSTOP) {
         toKill->setStatus(STOPPED);
     }
-    if (sigNum == SIGCONT) { //TODO: make sure that we should do that
+    if (sigNum == SIGCONT) {
         toKill->setStatus(RUNNING);
     }
     cout << "signal number " << sigNum << " was sent to pid "
@@ -684,7 +680,7 @@ void PipeCommand::execute() {
         }
         pipeFirstCmdPid = sons[0];
         pipeSecondCmdPid = sons[1];
-        while (wait(NULL) != -1); //TODO: make sure this waits properly to any sons existing
+        while (wait(NULL) != -1);
         if (sigINTOn) {//wait was interrupted by SIGINT, won't get here if got SIGTSTP!
             handleInterruptedCmdPipe(this);
         } else {//sons finished successfully should finish pipe as well
@@ -710,11 +706,10 @@ void PipeCommand::execute() {
 }
 
 void CopyCommand::execute() {
-    //TODO: check if there are 3 args, cmd, and two paths
     pid_t cpPid = fork();
     if (cpPid == 0) { //cp process
         setpgrp();
-        if (isRedirected()) { //TODO: check if necessary
+        if (isRedirected()) {
             if (!(setOutputFD(getPath(), type))) { //has to be ">" // or ">>"
                 exit(0);
             }
@@ -921,7 +916,7 @@ void SmallShell::executeCommand(const char *cmd_line) {
     bool isBuiltIn = false, redirectedSuccess = true;
     if (_trim(cmd_line).empty()) { //no cmd received, go get next cmd
         return;
-    }     //TODO: ask if that what we should do in the piazza!
+    }
     Command *cmd = CreateCommand(cmd_line);
     jobsList.removeFinishedJobs();
     IO_CHARS cmdIOType = cmd->getType();
