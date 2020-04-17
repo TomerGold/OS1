@@ -232,6 +232,7 @@ bool isArgumentExist(char **args, const string &toFind) {
 }
 
 void cpMain(char *const *args) {
+    //TODO: should we handle same file with one path relative and one absolute
     if (strcmp(args[1], args[2]) == 0) {
         cout << "smash: " << args[1] << " was copied to " << args[2] <<
              endl;
@@ -246,7 +247,7 @@ void cpMain(char *const *args) {
         perror("smash error: open failed");
         exit(0);
     }
-    fds[1] = open(args[2], O_WRONLY | O_CREAT | O_TRUNC, 0777);
+    fds[1] = open(args[2], O_WRONLY | O_CREAT | O_TRUNC, 0666);
     //TODO: check mode thingy in last line
     if (fds[1] == -1) {
         perror("smash error: open failed");
@@ -377,12 +378,12 @@ void GetCurrDirCommand::execute() {
 
 void ChangeDirCommand::execute() {
     if (argsNum > 2) {
-        cout << "smash error: cd: too many arguments" << endl;
+        cerr << "smash error: cd: too many arguments" << endl;
         return;
     }
     if (args[1] == NULL) return; //got only cd without path
     if (strcmp(args[1], "-") == 0 && *lastPwd == NULL) {
-        cout << "smash error: cd: OLDPWD not set" << endl;
+        cerr << "smash error: cd: OLDPWD not set" << endl;
         return;
     }
     char *currPath = get_current_dir_name();
@@ -422,16 +423,16 @@ void KillCommand::execute() {
         jobId = stoi(args[2]);
     }
     catch (const std::exception &e) {
-        cout << "smash error: kill: invalid arguments" << endl;
+        cerr << "smash error: kill: invalid arguments" << endl;
         return;
     }
     if (argsNum > 3 || sigNum < 0 || sigNum > 31) {
-        cout << "smash error: kill: invalid arguments" << endl;
+        cerr << "smash error: kill: invalid arguments" << endl;
         return;
     }
     JobsList::JobEntry *toKill = jobsList->getJobById(jobId);
     if (toKill == NULL) {
-        cout << "smash error: kill: job-id " << jobId << " does not "
+        cerr << "smash error: kill: job-id " << jobId << " does not "
                                                          "exist" << endl;
         return;
     }
@@ -439,8 +440,6 @@ void KillCommand::execute() {
         perror("smash error: kill failed");
         return;
     }
-    //TODO: make sure if we need to handle special signals as SIGSTOP
-    // and SIGCONT!
     if (sigNum == SIGSTOP) {
         toKill->setStatus(STOPPED);
     }
@@ -456,7 +455,7 @@ void ForegroundCommand::execute() {
     pid_t toFGPid = 0;
     JobsList::JobEntry *toFG = NULL;
     if (argsNum > 2) {
-        cout << "smash error: fg: invalid arguments" << endl;
+        cerr << "smash error: fg: invalid arguments" << endl;
         return;
     }
     if (argsNum == 2) { // if jobId was specified
@@ -464,18 +463,18 @@ void ForegroundCommand::execute() {
             jobId = stoi(args[1]);
         }
         catch (const std::exception &e) { // if jobId is not a number
-            cout << "smash error: fg: invalid arguments" << endl;
+            cerr << "smash error: fg: invalid arguments" << endl;
             return;
         }
         toFG = jobsList->getJobById(jobId);
         if (toFG == NULL) { // if requested jobId doesn't exist
-            cout << "smash error: fg: job-id " << jobId
+            cerr << "smash error: fg: job-id " << jobId
                  << " does not exist"
                  << endl;
             return;
         }
     } else if (argsNum == 1 && jobsList->isJobListEmpty()) {
-        cout << "smash error: fg: jobs list is empty" << endl;
+        cerr << "smash error: fg: jobs list is empty" << endl;
         return;
     } else {
         toFG = jobsList->getLastJob(&jobId);
@@ -509,7 +508,7 @@ void BackgroundCommand::execute() {
     pid_t toBGPid = 0;
     JobsList::JobEntry *toBG = NULL;
     if (argsNum > 2) {
-        cout << "smash error: bg: invalid arguments" << endl;
+        cerr << "smash error: bg: invalid arguments" << endl;
         return;
     }
     if (argsNum == 2) { // if jobId was specified
@@ -517,25 +516,25 @@ void BackgroundCommand::execute() {
             jobId = stoi(args[1]);
         }
         catch (const std::exception &e) { // if jobId is not a number
-            cout << "smash error: bg: invalid arguments" << endl;
+            cerr << "smash error: bg: invalid arguments" << endl;
             return;
         }
         toBG = jobsList->getJobById(jobId);
         if (toBG == NULL) { // if requested jobId doesn't exist
-            cout << "smash error: bg: job-id " << jobId
+            cerr << "smash error: bg: job-id " << jobId
                  << " does not exist"
                  << endl;
             return;
         }
         if (toBG->getStatus() != STOPPED) {
-            cout << "smash error: bg: job-id " << jobId << " is already "
+            cerr << "smash error: bg: job-id " << jobId << " is already "
                                                            "running in "
                                                            "the background"
                  << endl;
             return;
         }
     } else if (argsNum == 1 && !(jobsList->stoppedJobExists())) {
-        cout << "smash error: bg: there is no stopped jobs to resume" <<
+        cerr << "smash error: bg: there is no stopped jobs to resume" <<
              endl;
         return;
     } else {
