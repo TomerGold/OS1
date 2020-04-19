@@ -298,19 +298,16 @@ Command::Command(const char *cmd_line) : isBackground(false),
 }
 
 IO_CHARS Command::containsSpecialChars() const {
-    for (int i = 1; i < argsNum; i++) {
-        if (args[i] == NULL) break;
-        if (strcmp(args[i], ">") == 0) {
-            return REDIR;
-        } else if (strcmp(args[i], ">>") == 0) {
-            return REDIR_APPEND;
-        } else if (strcmp(args[i], "|") == 0) {
-            return PIPE;
-        } else if (strcmp(args[i], "|&") == 0) {
-            return PIPE_ERR;
-        }
+    if (origCmd.find(">>") != string::npos) {
+        return REDIR_APPEND;
+    } else if (origCmd.find('>') != string::npos) {
+        return REDIR;
+    } else if (origCmd.find("|&") != string::npos) {
+        return PIPE_ERR;
+    } else if (origCmd.find('|') != string::npos) {
+        return PIPE;
+        return NONE;
     }
-    return NONE;
 }
 
 bool Command::setOutputFD(const char *path, IO_CHARS type) {
