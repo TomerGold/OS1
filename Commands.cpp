@@ -102,10 +102,35 @@ int _parseCommandLine(const char *cmd_line, char **args) {
     int i = 0;
     std::istringstream iss(_trim(string(cmd_line)).c_str());
     for (std::string s; iss >> s;) {
-        args[i] = (char *) malloc(s.length() + 1);
-        memset(args[i], 0, s.length() + 1);
-        strcpy(args[i], s.c_str());
-        args[++i] = NULL;
+        if (s.find('>') != string::npos) { // split args with < included in them
+            string splittedArgs[3];
+            if (s.find(">>") != string::npos) { // args contain >>
+                int redirAppendPos = s.find(">>");
+                splittedArgs[0] = s.substr(0, redirAppendPos);
+                splittedArgs[1] = s.substr(redirAppendPos, 2);
+                splittedArgs[2] = s.substr(redirAppendPos + 2);
+            } else { // arg doesn't contain >>, so must contain only '>'
+                int redirPos = s.find('>');
+                splittedArgs[0] = s.substr(0, redirPos);
+                splittedArgs[1] = s.substr(redirPos, 1);
+                splittedArgs[2] = s.substr(redirPos + 1);
+            }
+            for (int j = 0; j < 3; j++) {
+                if (!(splittedArgs[j].empty())) {
+                    int length = splittedArgs[j].length();
+                    args[i] = (char *) malloc(length + 1);
+                    memset(args[i], 0, length + 1);
+                    strcpy(args[i], splittedArgs[j].c_str());
+                    args[++i] = NULL;
+
+                }
+            }
+        } else {
+            args[i] = (char *) malloc(s.length() + 1);
+            memset(args[i], 0, s.length() + 1);
+            strcpy(args[i], s.c_str());
+            args[++i] = NULL;
+        }
     }
     return i;
 
@@ -117,6 +142,9 @@ string getFirstArg(const char *cmd_line) {
     std::istringstream iss(_trim(string(cmd_line)).c_str());
     string s;
     iss >> s;
+    if (s.find('>') != string::npos) {
+        s = s.substr(0, s.find('>'));
+    }
     if (s.find('&') == (s.size() - 1)) {
         s.erase(s.size() - 1);
     }
@@ -152,7 +180,7 @@ char *createExternCmd(char *const *args) {
     while (args[i] != NULL) {
         if (args[i][0] == '>') break;
         externCmd += args[i];
-        if (args[i + 1] != NULL) {
+        if (args[i + 1] != NULL && args[i][0] != '>') {
             externCmd += " ";
         }
         i++;
@@ -232,7 +260,6 @@ bool isArgumentExist(char **args, const string &toFind) {
 }
 
 void cpMain(char *const *args) {
-    //TODO: should we handle same file with one path relative and one absolute
     if (strcmp(args[1], args[2]) == 0) {
         cout << "smash: " << args[1] << " was copied to " << args[2] <<
              endl;
@@ -279,7 +306,7 @@ Command::Command(const char *cmd_line) : isBackground(false),
                                          origCmd(cmd_line), redirected
                                                  (false), piped(false),
                                          stdOutCopy(1) {
-    for (int i = 0; i < COMMAND_MAX_ARGS + 1; ++i) {
+    for (int i = 0; i < ARGS_AMOUNT; ++i) {
         args[i] = NULL;
     }
     isBackground = _isBackgroundComamnd(cmd_line);
@@ -306,8 +333,8 @@ IO_CHARS Command::containsSpecialChars() const {
         return PIPE_ERR;
     } else if (origCmd.find('|') != string::npos) {
         return PIPE;
-        return NONE;
     }
+    return NONE;
 }
 
 bool Command::setOutputFD(const char *path, IO_CHARS type) {
@@ -384,6 +411,7 @@ void ChangeDirCommand::execute() {
         perror("smash error: get_current_dir_name failed");
         return;
     }
+    //TODO: handle redirection sticked to the args[1] like cd path>1.txt
     if (strcmp(args[1], "-") == 0) { // to go back to last pwd
         if (chdir(*lastPwd) == -1) {
             perror("smash error: chdir failed");

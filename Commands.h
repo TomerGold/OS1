@@ -11,6 +11,7 @@ using std::ostream;
 #define COMMAND_ARGS_MAX_LENGTH (200)
 #define COMMAND_MAX_ARGS (20)
 #define NOT_FORKED (-1)
+#define ARGS_AMOUNT (25)
 
 using std::string;
 using std::list;
@@ -38,17 +39,17 @@ protected:
     //TODO: change some to const (orig, args, pid, type, argsNum)
     bool isBackground;
     string origCmd;
-    char* args[COMMAND_MAX_ARGS + 1]; // TODO: make sure we make the strings const and not the pointer
+    char *args[ARGS_AMOUNT]; // TODO: make sure we make the strings const and not the pointer
     int argsNum;
     bool redirected;
     bool piped;
     IO_CHARS type;
     int stdOutCopy;
 public:
-    explicit Command(const char* cmd_line);
+    explicit Command(const char *cmd_line);
 
     virtual ~Command() {
-        for (int i = 0; i < COMMAND_MAX_ARGS + 1; i++) {
+        for (int i = 0; i < ARGS_AMOUNT; i++) {
             if (args[i] != NULL) {
                 free(args[i]);
             } else {
@@ -79,8 +80,17 @@ public:
         return stdOutCopy;
     }
 
-    const char* getPath() const {
-        return args[argsNum - 1];
+    const char *getPath() const {
+        int i = 0;
+        while (args[i] != NULL) {
+            if (strcmp(args[i], ">") == 0) {
+                return args[i + 1];
+            } else if (strcmp(args[i], ">>") == 0) {
+                return args[i + 1];
+            }
+            i++;
+        }
+        return NULL;
     }
 
     IO_CHARS getType() const {
@@ -93,23 +103,23 @@ public:
 
     void restoreStdOut();
 
-    char* const * getArgs() const {
+    char *const *getArgs() const {
         return args;
     }
 };
 
 class BuiltInCommand : public Command {
 public:
-    explicit BuiltInCommand(const char* cmd_line) : Command(cmd_line) {
+    explicit BuiltInCommand(const char *cmd_line) : Command(cmd_line) {
     };
 
     virtual ~BuiltInCommand() = default;
 };
 
 class ChangeDirCommand : public BuiltInCommand {
-    char** lastPwd;
+    char **lastPwd;
 public:
-    ChangeDirCommand(const char* cmd_line, char** plastPwd) :
+    ChangeDirCommand(const char *cmd_line, char **plastPwd) :
             BuiltInCommand(cmd_line), lastPwd(plastPwd) {
     };
 
@@ -120,7 +130,7 @@ public:
 
 class GetCurrDirCommand : public BuiltInCommand {
 public:
-    explicit GetCurrDirCommand(const char* cmd_line) : BuiltInCommand(
+    explicit GetCurrDirCommand(const char *cmd_line) : BuiltInCommand(
             cmd_line) {
     };
 
@@ -132,7 +142,7 @@ public:
 class ShowPidCommand : public BuiltInCommand {
     pid_t smashPid;
 public:
-    ShowPidCommand(const char* cmd_line, pid_t smashPid) : BuiltInCommand(
+    ShowPidCommand(const char *cmd_line, pid_t smashPid) : BuiltInCommand(
             cmd_line), smashPid(smashPid) {
     };
 
@@ -146,13 +156,13 @@ public:
     class JobEntry {
         int jobId;
         pid_t pid;
-        Command* cmd;
+        Command *cmd;
         STATUS status;
         time_t startTime;
 
     public:
 
-        JobEntry(int jobId, int pid, Command* cmd, STATUS status) :
+        JobEntry(int jobId, int pid, Command *cmd, STATUS status) :
                 jobId(jobId), pid(pid), cmd(cmd), status(status) {
             startTime = time(NULL);
             if (startTime == (time_t) (-1)) {
@@ -170,7 +180,7 @@ public:
             return pid;
         }
 
-        Command* getCommand() const {
+        Command *getCommand() const {
             return cmd;
         }
 
@@ -193,7 +203,7 @@ public:
             }
         }
 
-        bool operator==(const JobEntry& entry){
+        bool operator==(const JobEntry &entry) {
             return jobId == entry.jobId;
         }
     };
@@ -208,7 +218,7 @@ public:
 
     ~JobsList() = default;
 
-    void addJob(Command* cmd, pid_t pid, bool isStopped = false);
+    void addJob(Command *cmd, pid_t pid, bool isStopped = false);
 
     void printJobsList();
 
@@ -216,13 +226,13 @@ public:
 
     void removeFinishedJobs();
 
-    JobEntry* getJobById(int jobId);
+    JobEntry *getJobById(int jobId);
 
     void removeJobById(int jobId);
 
-    JobEntry* getLastJob(int* lastJobId);
+    JobEntry *getLastJob(int *lastJobId);
 
-    JobEntry* getLastStoppedJob(int* jobId);
+    JobEntry *getLastStoppedJob(int *jobId);
 
     bool isJobListEmpty() const {
         return jobsList.empty();
@@ -235,10 +245,10 @@ public:
 
 class ExternalCommand : public Command {
 protected:
-    JobsList* jobsList;
+    JobsList *jobsList;
     bool isCpCmd;
 public:
-    ExternalCommand(const char* cmd_line, JobsList*
+    ExternalCommand(const char *cmd_line, JobsList *
     jobs, bool isCpCmd = false) : Command(cmd_line), jobsList(jobs),
                                   isCpCmd(isCpCmd) {
     };
@@ -247,17 +257,17 @@ public:
 
     void execute() override;
 
-    bool isCp() const{
+    bool isCp() const {
         return isCpCmd;
     }
 };
 
 class PipeCommand : public Command {
-    Command* firstCmd;
-    Command* secondCmd;
-    JobsList* jobsList;
+    Command *firstCmd;
+    Command *secondCmd;
+    JobsList *jobsList;
 public:
-    explicit PipeCommand(const char* cmd_line, JobsList* jobsList) :
+    explicit PipeCommand(const char *cmd_line, JobsList *jobsList) :
             Command(cmd_line), firstCmd(NULL), secondCmd(NULL),
             jobsList(jobsList) {
     };
@@ -267,11 +277,11 @@ public:
         delete secondCmd;
     }
 
-    void setFirstCmd(Command* first) {
+    void setFirstCmd(Command *first) {
         firstCmd = first;
     }
 
-    void setSecondCmd(Command* second) {
+    void setSecondCmd(Command *second) {
         secondCmd = second;
     }
 
@@ -279,9 +289,9 @@ public:
 };
 
 class JobsCommand : public BuiltInCommand {
-    JobsList* jobsList;
+    JobsList *jobsList;
 public:
-    JobsCommand(const char* cmd_line, JobsList* jobs) : BuiltInCommand
+    JobsCommand(const char *cmd_line, JobsList *jobs) : BuiltInCommand
                                                                 (cmd_line),
                                                         jobsList(jobs) {
     };
@@ -292,9 +302,9 @@ public:
 };
 
 class KillCommand : public BuiltInCommand {
-    JobsList* jobsList;
+    JobsList *jobsList;
 public:
-    KillCommand(const char* cmd_line, JobsList* jobs) : BuiltInCommand(
+    KillCommand(const char *cmd_line, JobsList *jobs) : BuiltInCommand(
             cmd_line), jobsList(jobs) {
     };
 
@@ -304,9 +314,9 @@ public:
 };
 
 class ForegroundCommand : public BuiltInCommand {
-    JobsList* jobsList;
+    JobsList *jobsList;
 public:
-    ForegroundCommand(const char* cmd_line, JobsList* jobs)
+    ForegroundCommand(const char *cmd_line, JobsList *jobs)
             : BuiltInCommand
                       (cmd_line),
               jobsList(jobs) {
@@ -318,9 +328,9 @@ public:
 };
 
 class BackgroundCommand : public BuiltInCommand {
-    JobsList* jobsList;
+    JobsList *jobsList;
 public:
-    BackgroundCommand(const char* cmd_line, JobsList* jobs)
+    BackgroundCommand(const char *cmd_line, JobsList *jobs)
             : BuiltInCommand
                       (cmd_line),
               jobsList(jobs) {
@@ -333,7 +343,7 @@ public:
 
 class CopyCommand : public ExternalCommand {
 public:
-    CopyCommand(const char* cmd_line, JobsList* jobsList) :
+    CopyCommand(const char *cmd_line, JobsList *jobsList) :
             ExternalCommand(cmd_line, jobsList, true) {
     };
 
@@ -350,18 +360,18 @@ private:
 
     string prompt;
 
-    char* lastPwd;
+    char *lastPwd;
 
     JobsList jobsList;
 
     bool toQuit;
 
 public:
-    Command* CreateCommand(const char* cmd_line);
+    Command *CreateCommand(const char *cmd_line);
 
-    SmallShell(SmallShell const&) = delete; // disable copy ctor
-    void operator=(SmallShell const&) = delete; // disable = operator
-    static SmallShell& getInstance() // make SmallShell singleton
+    SmallShell(SmallShell const &) = delete; // disable copy ctor
+    void operator=(SmallShell const &) = delete; // disable = operator
+    static SmallShell &getInstance() // make SmallShell singleton
     {
         static SmallShell instance; // Guaranteed to be destroyed.
         // Instantiated on first use.
@@ -372,7 +382,7 @@ public:
         return prompt;
     }
 
-    void setPrompt(const string& newPrompt) {
+    void setPrompt(const string &newPrompt) {
         prompt = newPrompt;
     }
 
@@ -386,13 +396,13 @@ public:
 
     ~SmallShell();
 
-    void executeCommand(const char* cmd_line);
+    void executeCommand(const char *cmd_line);
 };
 
 class ChangePrompt : public BuiltInCommand {
-    SmallShell* smallShell;
+    SmallShell *smallShell;
 public:
-    ChangePrompt(const char* cmd_line, SmallShell* smash) :
+    ChangePrompt(const char *cmd_line, SmallShell *smash) :
             BuiltInCommand(cmd_line), smallShell(smash) {
     };
 
@@ -402,10 +412,10 @@ public:
 };
 
 class QuitCommand : public BuiltInCommand {
-    JobsList* jobsList;
-    SmallShell* smash;
+    JobsList *jobsList;
+    SmallShell *smash;
 public:
-    QuitCommand(const char* cmd_line, JobsList* jobs, SmallShell* smash) :
+    QuitCommand(const char *cmd_line, JobsList *jobs, SmallShell *smash) :
             BuiltInCommand
                     (cmd_line),
             jobsList(jobs),
