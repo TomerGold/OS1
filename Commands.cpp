@@ -260,11 +260,15 @@ bool isArgumentExist(char **args, const string &toFind) {
 }
 
 void cpMain(char *const *args) {
+    if (args[1] == NULL || args[2] == NULL) {
+        exit(0);
+    }
     if (strcmp(args[1], args[2]) == 0) {
         cout << "smash: " << args[1] << " was copied to " << args[2] <<
              endl;
         exit(0);
     }
+    //TODO: check why only works with buffer size of 1
     char buffer[1];
     int fds[2];
     size_t buf_size = 1;
@@ -375,7 +379,7 @@ void Command::restoreStdOut() {
 }
 
 void ChangePrompt::execute() {
-    if (args[1] == NULL) {
+    if (args[1] == NULL || args[1][0] == '>') {
         smallShell->setPrompt(defPrompt);
         return;
     }
