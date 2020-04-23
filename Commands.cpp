@@ -894,10 +894,16 @@ void JobsList::killAllJobs() {
         pid_t currPid = iter->getPid();
         cout << currPid << ": " <<
              iter->getCommand()->getOrigCmd() << endl;
-        if (kill(currPid, SIGKILL) == -1) {
+        if (iter->getCommand()->isPiped()) {
+            if (kill(currPid, SIGINT) == -1) {
+                perror("smash error: kill failed");
+                return;
+            }
+        } else if (kill(currPid, SIGKILL) == -1) {
             perror("smash error: kill failed");
             return;
         }
+
     }
 }
 
