@@ -11,6 +11,7 @@ using std::ostream;
 #define COMMAND_ARGS_MAX_LENGTH (200)
 #define COMMAND_MAX_ARGS (20)
 #define NOT_FORKED (-1)
+#define NO_NEXT_ALARM (-1)
 #define ARGS_AMOUNT (25)
 
 using std::string;
@@ -18,11 +19,16 @@ using std::list;
 
 extern bool sigSTPOn;
 extern bool sigINTOn;
+extern bool sigAlarmOn;
 extern pid_t foregroundPid;
 extern bool isForegroundPipe;
 extern string defPrompt;
 extern pid_t pipeFirstCmdPid;
 extern pid_t pipeSecondCmdPid;
+extern bool isForegroundTimeout;
+extern pid_t timeoutInnerCmdPid;
+extern time_t nextEndingTime;
+
 
 typedef enum {
     RUNNING, STOPPED
@@ -44,6 +50,7 @@ protected:
     bool piped;
     IO_CHARS type;
     int stdOutCopy;
+    bool isTimeout;
 public:
     explicit Command(const char *cmd_line);
 
@@ -75,8 +82,8 @@ public:
         return redirected;
     }
 
-    int getStdOutCopy() const {
-        return stdOutCopy;
+    int getArgsNum() const {
+        return argsNum;
     }
 
     const char *getPath() const {
@@ -101,6 +108,10 @@ public:
     }
 
     void restoreStdOut();
+
+    bool isTimeouted() const {
+        return isTimeout;
+    }
 
     char *const *getArgs() const {
         return args;
@@ -240,6 +251,14 @@ public:
     bool stoppedJobExists() const;
 
     void destroyCmds();
+
+    int getMaxId() const {
+        return maxId;
+    }
+
+    JobEntry *getJobByPid(pid_t pid);
+
+    JobEntry *getSoonestTimeoutEntry();
 };
 
 class ExternalCommand : public Command {
@@ -266,7 +285,7 @@ class PipeCommand : public Command {
     Command *secondCmd;
     JobsList *jobsList;
 public:
-    explicit PipeCommand(const char *cmd_line, JobsList *jobsList) :
+    PipeCommand(const char *cmd_line, JobsList *jobsList) :
             Command(cmd_line), firstCmd(NULL), secondCmd(NULL),
             jobsList(jobsList) {
     };
@@ -351,7 +370,32 @@ public:
     void execute() override;
 };
 
-// TODO: add more classes if needed maybe timeout ?
+class TimeoutCommand : public Command {
+    Command *innerCmd;
+    JobsList *jobsList;
+    int duration;
+    time_t endingTime;
+
+public:
+    TimeoutCommand(const char *cmd_line, JobsList *jobsList) :
+            Command(cmd_line), innerCmd(NULL), jobsList(jobsList), duration(0), endingTime(0) {
+
+    };
+
+    time_t getEndingTime() const {
+        return endingTime;
+    }
+
+    virtual ~TimeoutCommand() {
+        delete innerCmd;
+    }
+
+    void setInnerCmd(Command *inner) {
+        innerCmd = inner;
+    }
+
+    void execute() override;
+};
 
 class SmallShell {
 private:
@@ -425,5 +469,8 @@ public:
 
     void execute() override;
 };
+
+extern JobsList alarmList;
+extern pid_t nextAlarmedPid;
 
 #endif //SMASH_COMMAND_H_

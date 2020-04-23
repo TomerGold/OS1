@@ -9,17 +9,20 @@ using namespace std;
 
 bool sigSTPOn = false;
 bool sigINTOn = false;
+bool sigAlarmOn = false;
 
 void ctrlCHandler(int sig_num) {
     cout << "smash: got ctrl-C" << endl;
-    if (foregroundPid == 0){
+    if (foregroundPid == 0) {
         return;
     }
     sigINTOn = true;
-    if(isForegroundPipe){
+    if (isForegroundTimeout) {
         kill(foregroundPid, SIGINT);
     }
-    else {
+    if (isForegroundPipe) {
+        kill(foregroundPid, SIGINT);
+    } else {
         kill(foregroundPid, SIGKILL);
     }
     cout << "smash: process " << foregroundPid << " was killed" << endl;
@@ -27,14 +30,16 @@ void ctrlCHandler(int sig_num) {
 
 void ctrlZHandler(int sig_num) {
     cout << "smash: got ctrl-Z" << endl;
-    if (foregroundPid == 0){
+    if (foregroundPid == 0) {
         return;
     }
     sigSTPOn = true;
-    if(isForegroundPipe){
-        kill(foregroundPid, SIGTSTP);
+    if (isForegroundTimeout) {
+        kill(foregroundPid, SIGINT);
     }
-    else {
+    if (isForegroundPipe) {
+        kill(foregroundPid, SIGTSTP);
+    } else {
         kill(foregroundPid, SIGSTOP);
     }
     cout << "smash: process " << foregroundPid << " was stopped" << endl;
@@ -74,6 +79,24 @@ void pipeSigcontHandler(int sig_num){
 }
 
 void alarmHandler(int sig_num) {
-    // TODO: Add your implementation
+    //TODO: add printings!
+    if (foregroundPid == nextAlarmedPid) {
+        sigAlarmOn = true;
+    }
+    JobsList::JobEntry *toRemoveJob = alarmList.getJobByPid(nextAlarmedPid);
+    delete (toRemoveJob->getCommand());
+    alarmList.removeJobById(toRemoveJob->getJobId()); //TODO: weak point
+    kill(nextAlarmedPid, SIGINT); //sending SIGINT so Timeout cmd will kill it's inner cmd and commit suicide
+    JobsList::JobEntry *soonest = alarmList.getSoonestTimeoutEntry();
+    if (soonest != NULL) {
+        alarm(nextEndingTime - time(NULL));
+        nextAlarmedPid = soonest->getPid();
+    } else {
+        alarm(0); // cancel further alarms since there are no more timeout cmds
+    }
 }
+
+//TODO: add timeoutCtrlC handler
+//TODO: add timeoutCtrlZ handler
+//TODO: add timeoutSigcontHandler
 

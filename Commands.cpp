@@ -15,6 +15,10 @@ pid_t foregroundPid = 0;
 bool isForegroundPipe = false;
 pid_t pipeFirstCmdPid = NOT_FORKED;
 pid_t pipeSecondCmdPid = NOT_FORKED;
+bool isForegroundTimeout = false;
+pid_t timeoutInnerCmdPid = NOT_FORKED;
+pid_t nextAlarmedPid = NO_NEXT_ALARM;
+time_t nextEndingTime = NO_NEXT_ALARM;
 
 string defPrompt = "smash";
 
@@ -332,7 +336,7 @@ void cpMain(char *const *args) {
 Command::Command(const char *cmd_line) : isBackground(false),
                                          origCmd(cmd_line), redirected
                                                  (false), piped(false),
-                                         stdOutCopy(1) {
+                                         stdOutCopy(1), isTimeout(false) {
     for (int i = 0; i < ARGS_AMOUNT; ++i) {
         args[i] = NULL;
     }
@@ -341,6 +345,9 @@ Command::Command(const char *cmd_line) : isBackground(false),
     strcpy(without_amper, cmd_line);
     _removeBackgroundSign(without_amper);
     argsNum = _parseCommandLine(without_amper, args);
+    if (strcmp(args[0], "timeout") == 0) {
+        isTimeout = true;
+    }
     IO_CHARS receivedType = containsSpecialChars();
     type = receivedType;
     if (receivedType == REDIR || receivedType == REDIR_APPEND) {
@@ -762,6 +769,67 @@ void PipeCommand::execute() {
     }
 }
 
+void TimeoutCommand::execute() {
+    try {
+        duration = stoi(args[1]);
+    }
+    catch (const std::exception &e) {
+        cerr << "smash error: timeout: invalid arguments" << endl;
+        delete this;
+        return;
+    }
+    if (duration <= 0) {
+        cerr << "smash error: timeout: invalid arguments" << endl;
+        delete this;
+        return;
+    }
+    endingTime = time(NULL) + duration;
+    pid_t timeoutPid = fork();
+    if (timeoutPid == 0) { //timeout process
+        //TODO: setpgrp and install handlers! with signal;
+        //TODO: similliar to pipe handle execute of inner cmd
+        //TODO: as in pipe, wait for child (if exists) and handle signals meanwhile-
+        /*TODO: signal handling -
+         * 1. on SIGINT - as in pipe kill child and then timeout itself and then exit
+         * 2. SIGTSTP - send stop to child and then stop to yourself
+         * 3. SIGCONT - continue son;
+         */
+        exit(0);
+    } else { //smash process
+        alarmList.addJob(this, timeoutPid);
+        if (nextEndingTime == NO_NEXT_ALARM || nextEndingTime > endingTime) { //no previous alarm exists
+            // or previous alarm is later
+            alarm(duration);
+            nextAlarmedPid = timeoutPid;
+            nextEndingTime = endingTime;
+        }
+        if (isBackgroundCmd()) {//timeout runs in the background
+            jobsList->addJob(this, timeoutPid);
+        } else {//timeout runs in the foreground, wait for it and handle signals
+            isForegroundTimeout = true;
+            foregroundPid = timeoutPid;
+            waitpid(timeoutPid, NULL, WUNTRACED);
+            if (sigINTOn || sigSTPOn) { // was interrupted by signal
+                handleInterruptedCmd(timeoutPid, this, NULL, jobsList);
+            } else { // finished successfully or because of timeout or because inner command finished
+                delete this;
+                isForegroundTimeout = false;
+                foregroundPid = 0;
+                if (!sigAlarmOn) { // finished because inner cmd finished
+                    alarmList.removeJobById(alarmList.getMaxId()); //TODO: weak point
+                    JobsList::JobEntry *soonest = alarmList.getSoonestTimeoutEntry(); // TODO: another weak point
+                    if (soonest != NULL) {
+                        alarm(nextEndingTime - time(NULL));
+                        nextAlarmedPid = soonest->getPid();
+                    } else {
+                        alarm(0); // cancel further alarms since there are no more timeout cmds
+                    }
+                } // else case, finished because of timeout is handled in the handler!
+            }
+        }
+    }
+}
+
 void CopyCommand::execute() {
     pid_t cpPid = fork();
     if (cpPid == 0) { //cp process
@@ -845,6 +913,36 @@ void JobsList::removeJobById(int jobId) {
             return;
         }
     }
+}
+
+JobsList::JobEntry *JobsList::getJobByPid(pid_t pid) {
+    for (auto iter = jobsList.begin(); iter != jobsList.end();
+         ++iter) {
+        if (iter->getPid() == pid) {
+            return &(*iter);
+        }
+    }
+}
+
+JobsList::JobEntry *JobsList::getSoonestTimeoutEntry() {
+    if (jobsList.empty()) {
+        nextEndingTime = NO_NEXT_ALARM;
+        nextAlarmedPid = NO_NEXT_ALARM;
+        return NULL;
+    }
+    JobsList::JobEntry *soonestEntry = &(*jobsList.begin());
+    TimeoutCommand *soonestTimeout = (TimeoutCommand *) ((jobsList.begin())->getCommand());
+    time_t minEndingTime = soonestTimeout->getEndingTime();
+    for (auto iter = jobsList.begin(); iter != jobsList.end();
+         ++iter) {
+        TimeoutCommand *currentTimeout = (TimeoutCommand *) (iter->getCommand());
+        if (currentTimeout->getEndingTime() < minEndingTime) {
+            minEndingTime = currentTimeout->getEndingTime();
+            soonestEntry = &(*iter);
+        }
+    }
+    nextEndingTime = minEndingTime;
+    return soonestEntry;
 }
 
 bool JobsList::stoppedJobExists() const {
@@ -971,6 +1069,9 @@ Command *SmallShell::CreateCommand(const char *cmd_line) {
         }
         if (cmdOnly == "cp") {
             return new CopyCommand(cmd_line, &jobsList);
+        }
+        if (cmdOnly == "timeout") {
+            return new TimeoutCommand(cmd_line, &jobsList);
         } else { // External Cmds
             return new ExternalCommand(cmd_line, &jobsList);
         }
@@ -990,7 +1091,19 @@ void SmallShell::executeCommand(const char *cmd_line) {
     if (cmd == NULL) return; //allocation failed, wait for next command
     jobsList.removeFinishedJobs();
     IO_CHARS cmdIOType = cmd->getType();
-    if (cmd->isPiped()) { //prepare sub cmds of the pipe
+    if (cmd->isTimeouted()) {
+        if (cmd->getArgsNum() <= 2) {
+            cerr << "smash error: timeout: invalid arguments" << endl;
+            delete cmd;
+            return;
+        }
+        string stringCmd = (string) (cmd_line);
+        unsigned long innerCmdIndex = stringCmd.find(cmd->getArgs()[2]);
+        string innerCmd = stringCmd.substr(innerCmdIndex);
+        ((TimeoutCommand *) (cmd))->setInnerCmd( //converting to TimeoutCommand
+                // to access setCmd member function
+                CreateCommand(innerCmd.c_str()));
+    } else if (cmd->isPiped()) { //prepare sub cmds of the pipe
         string stringCmd = (string) (cmd_line);
         unsigned long pipeIndex = stringCmd.find('|');
         string firstCmd = stringCmd.substr(0, pipeIndex);
