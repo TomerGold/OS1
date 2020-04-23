@@ -185,6 +185,10 @@ char *createExternCmd(char *const *args) {
         i++;
     }
     char *externCmdStr = (char *) malloc(externCmd.size() + 1);
+    if (externCmdStr == NULL) {//allocation error
+        cerr << "smash error: memory allocation failed" << endl;
+        return NULL;
+    }
     strcpy(externCmdStr, externCmd.c_str());
     externCmdStr[externCmd.size()] = '\0';
     return externCmdStr;
@@ -192,14 +196,35 @@ char *createExternCmd(char *const *args) {
 
 char **createBashArgs(char *const *args) {
     char **bashArgs = (char **) malloc(4 * sizeof(char *));
+    if (bashArgs == NULL) {
+        cerr << "smash error: memory allocation failed" << endl;
+        return NULL;
+    }
     char *externCmdStr = createExternCmd(
             args); //have to do this because of execv demands
+    if (externCmdStr == NULL) {
+        free(bashArgs);
+        return NULL;
+    }
     char *bash = (char *) malloc(10 * sizeof(char));
+    if (bash == NULL) {
+        free(bashArgs);
+        free(externCmdStr);
+        cerr << "smash error: memory allocation failed" << endl;
+        return NULL;
+    }
     string bashStr = "/bin/bash";
     strcpy(bash, bashStr.c_str());
     bash[9] = '\0';
 
     char *cOption = (char *) malloc(3 * sizeof(char));
+    if (cOption == NULL) {
+        free(bashArgs);
+        free(bash);
+        free(externCmdStr);
+        cerr << "smash error: memory allocation failed" << endl;
+        return NULL;
+    }
     string cOptionStr = "-c";
     strcpy(cOption, cOptionStr.c_str());
     cOption[2] = '\0';
@@ -585,6 +610,7 @@ void ExternalCommand::execute() {
     }
     if (pid == 0) { // child process
         char **bashArgs = createBashArgs(args);
+        if (bashArgs == NULL) exit(0); // allocation error, cannot execute external cmd
         if (isRedirected()) {
             if (!(setOutputFD(getPath(), type))) { //has to be ">" // or ">>"
                 exit(0);
@@ -656,6 +682,7 @@ void PipeCommand::execute() {
                 close(myPipe[0]);
                 if (!(((ExternalCommand *) firstCmd)->isCp())) { //firstCmd external
                     char **firstBashArgs = createBashArgs(firstCmd->getArgs());
+                    if (firstBashArgs == NULL) exit(0);
                     execv("/bin/bash", firstBashArgs);
                     perror("smash error: execv failed");
                     freeBashArgs(firstBashArgs);
@@ -682,6 +709,7 @@ void PipeCommand::execute() {
                 }
                 if (!(((ExternalCommand *) secondCmd)->isCp())) { //secondCmd external
                     char **secondBashArgs = createBashArgs(secondCmd->getArgs());
+                    if (secondBashArgs == NULL) exit(0);
                     execv("/bin/bash", secondBashArgs);
                     perror("smash error: execv failed");
                     freeBashArgs(secondBashArgs);
@@ -904,40 +932,46 @@ Command *SmallShell::CreateCommand(const char *cmd_line) {
     string cmdOnly = getFirstArg(cmd_line);
 
     //find return The position of the first character of the first match
-    if (cmd_trimmed.find('|') != string::npos) {
-        return new PipeCommand(cmd_line, &jobsList);
+    try {
+        if (cmd_trimmed.find('|') != string::npos) {
+            return new PipeCommand(cmd_line, &jobsList);
+        }
+        if (cmdOnly == "pwd") {
+            return new GetCurrDirCommand(cmd_line);
+        }
+        if (cmdOnly == "chprompt") {
+            return new ChangePrompt(cmd_line, this);
+        }
+        if (cmdOnly == "showpid") {
+            return new ShowPidCommand(cmd_line, getpid());
+        }
+        if (cmdOnly == "cd") {
+            return new ChangeDirCommand(cmd_line, &lastPwd);
+        }
+        if (cmdOnly == "jobs") {
+            return new JobsCommand(cmd_line, &jobsList);
+        }
+        if (cmdOnly == "kill") {
+            return new KillCommand(cmd_line, &jobsList);
+        }
+        if (cmdOnly == "fg") {
+            return new ForegroundCommand(cmd_line, &jobsList);
+        }
+        if (cmdOnly == "bg") {
+            return new BackgroundCommand(cmd_line, &jobsList);
+        }
+        if (cmdOnly == "quit") {
+            return new QuitCommand(cmd_line, &jobsList, this);
+        }
+        if (cmdOnly == "cp") {
+            return new CopyCommand(cmd_line, &jobsList);
+        } else { // External Cmds
+            return new ExternalCommand(cmd_line, &jobsList);
+        }
     }
-    if (cmdOnly == "pwd") {
-        return new GetCurrDirCommand(cmd_line);
-    }
-    if (cmdOnly == "chprompt") {
-        return new ChangePrompt(cmd_line, this);
-    }
-    if (cmdOnly == "showpid") {
-        return new ShowPidCommand(cmd_line, getpid());
-    }
-    if (cmdOnly == "cd") {
-        return new ChangeDirCommand(cmd_line, &lastPwd);
-    }
-    if (cmdOnly == "jobs") {
-        return new JobsCommand(cmd_line, &jobsList);
-    }
-    if (cmdOnly == "kill") {
-        return new KillCommand(cmd_line, &jobsList);
-    }
-    if (cmdOnly == "fg") {
-        return new ForegroundCommand(cmd_line, &jobsList);
-    }
-    if (cmdOnly == "bg") {
-        return new BackgroundCommand(cmd_line, &jobsList);
-    }
-    if (cmdOnly == "quit") {
-        return new QuitCommand(cmd_line, &jobsList, this);
-    }
-    if (cmdOnly == "cp") {
-        return new CopyCommand(cmd_line, &jobsList);
-    } else { // External Cmds
-        return new ExternalCommand(cmd_line, &jobsList);
+    catch (const std::exception &e) {
+        cerr << "smash error: memory allocation failed" << endl;
+        return NULL;
     }
 }
 
@@ -947,6 +981,7 @@ void SmallShell::executeCommand(const char *cmd_line) {
         return;
     }
     Command *cmd = CreateCommand(cmd_line);
+    if (cmd == NULL) return; //allocation failed, wait for next command
     jobsList.removeFinishedJobs();
     IO_CHARS cmdIOType = cmd->getType();
     if (cmd->isPiped()) { //prepare sub cmds of the pipe
