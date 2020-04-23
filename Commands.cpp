@@ -138,7 +138,6 @@ int _parseCommandLine(const char *cmd_line, char **args) {
 }
 
 string getFirstArg(const char *cmd_line) {
-    //TODO: should we handle connected redirection cmd like cmd>txt.1
     std::istringstream iss(_trim(string(cmd_line)).c_str());
     string s;
     iss >> s;
@@ -245,7 +244,6 @@ void pipeManageFD(FDT_CHANNEL FDToCLose, int newFD, IO_CHARS pipeType) {
         perror("smash error: close failed");
         exit(0);
     }
-    // TODO: make sure this is ok to just exit pipe in case of built in cmds
 }
 
 bool isArgumentExist(char **args, const string &toFind) {
@@ -372,7 +370,6 @@ void Command::restoreStdOut() {
     if (stdOutCopy == -1) {
         return;
     }
-    //TODO: what happens if something fails here?!
     close(1);
     dup2(stdOutCopy, 1);
     close(stdOutCopy);
@@ -401,11 +398,11 @@ void GetCurrDirCommand::execute() {
 }
 
 void ChangeDirCommand::execute() {
-    if (argsNum > 2) {
+    if (args[1] == NULL || args[1][0] == '>') return; //got only cd without path
+    if (argsNum > 2 && args[2][0] != '>') {
         cerr << "smash error: cd: too many arguments" << endl;
         return;
     }
-    if (args[1] == NULL) return; //got only cd without path
     if (strcmp(args[1], "-") == 0 && *lastPwd == NULL) {
         cerr << "smash error: cd: OLDPWD not set" << endl;
         return;
@@ -415,7 +412,6 @@ void ChangeDirCommand::execute() {
         perror("smash error: get_current_dir_name failed");
         return;
     }
-    //TODO: handle redirection sticked to the args[1] like cd path>1.txt
     if (strcmp(args[1], "-") == 0) { // to go back to last pwd
         if (chdir(*lastPwd) == -1) {
             perror("smash error: chdir failed");
@@ -451,7 +447,7 @@ void KillCommand::execute() {
         cerr << "smash error: kill: invalid arguments" << endl;
         return;
     }
-    if (argsNum > 3 || sigNum < 0 || sigNum > 31) {
+    if ((argsNum > 3 && args[3][0] != '>') || sigNum < 0 || sigNum > 31) {
         cerr << "smash error: kill: invalid arguments" << endl;
         return;
     }
@@ -479,11 +475,11 @@ void ForegroundCommand::execute() {
     int jobId = 0;
     pid_t toFGPid = 0;
     JobsList::JobEntry *toFG = NULL;
-    if (argsNum > 2) {
+    if (argsNum > 2 && args[2][0] != '>' && args[1][0] != '>') {
         cerr << "smash error: fg: invalid arguments" << endl;
         return;
     }
-    if (argsNum == 2) { // if jobId was specified
+    if (argsNum >= 2 && args[1][0] != '>') { // if jobId was specified
         try {
             jobId = stoi(args[1]);
         }
@@ -498,7 +494,7 @@ void ForegroundCommand::execute() {
                  << endl;
             return;
         }
-    } else if (argsNum == 1 && jobsList->isJobListEmpty()) {
+    } else if ((argsNum == 1 || args[1][0] == '>') && jobsList->isJobListEmpty()) {
         cerr << "smash error: fg: jobs list is empty" << endl;
         return;
     } else {
@@ -532,11 +528,11 @@ void BackgroundCommand::execute() {
     int jobId = 0;
     pid_t toBGPid = 0;
     JobsList::JobEntry *toBG = NULL;
-    if (argsNum > 2) {
+    if (argsNum > 2 && args[2][0] != '>' && args[1][0] != '>') {
         cerr << "smash error: bg: invalid arguments" << endl;
         return;
     }
-    if (argsNum == 2) { // if jobId was specified
+    if (argsNum >= 2 && args[1][0] != '>') { // if jobId was specified
         try {
             jobId = stoi(args[1]);
         }
@@ -558,7 +554,7 @@ void BackgroundCommand::execute() {
                  << endl;
             return;
         }
-    } else if (argsNum == 1 && !(jobsList->stoppedJobExists())) {
+    } else if ((argsNum == 1 || args[1][0] == '>') && !(jobsList->stoppedJobExists())) {
         cerr << "smash error: bg: there is no stopped jobs to resume" <<
              endl;
         return;
@@ -958,10 +954,10 @@ void SmallShell::executeCommand(const char *cmd_line) {
         unsigned long pipeIndex = stringCmd.find('|');
         string firstCmd = stringCmd.substr(0, pipeIndex);
         string secondCmd;
-        if (cmdIOType == PIPE) { //TODO: verify staring location of
+        if (cmdIOType == PIPE) {
             // second cmd , is it really pipeIndex + 1?
             secondCmd = stringCmd.substr(pipeIndex + 1);
-        } else {//must be PIPE_ERR //TODO: verify also here (|&)
+        } else {//must be PIPE_ERR
             secondCmd = stringCmd.substr(pipeIndex + 2);
         }
         ((PipeCommand *) (cmd))->setFirstCmd( //converting to PipeCommand

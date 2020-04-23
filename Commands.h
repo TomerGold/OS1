@@ -36,10 +36,9 @@ typedef enum {
 
 class Command {
 protected:
-    //TODO: change some to const (orig, args, pid, type, argsNum)
     bool isBackground;
     string origCmd;
-    char *args[ARGS_AMOUNT]; // TODO: make sure we make the strings const and not the pointer
+    char *args[ARGS_AMOUNT];
     int argsNum;
     bool redirected;
     bool piped;
@@ -428,16 +427,3 @@ public:
 };
 
 #endif //SMASH_COMMAND_H_
-
-//TODO: consider deleting this class
-//class RedirectionCommand : public Command {
-//public:
-//    explicit RedirectionCommand(const char* cmd_line);
-//
-//    virtual ~RedirectionCommand() {
-//    }
-//
-//    void execute() override;
-//    //void prepare() override;
-//    //void cleanup() override;
-//};
