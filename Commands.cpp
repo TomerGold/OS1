@@ -19,6 +19,7 @@ bool isForegroundTimeout = false;
 pid_t timeoutInnerCmdPid = NOT_FORKED;
 pid_t nextAlarmedPid = NO_NEXT_ALARM;
 time_t nextEndingTime = NO_NEXT_ALARM;
+JobsList alarmList;
 
 string defPrompt = "smash";
 
@@ -55,6 +56,21 @@ string _trim(const std::string &s) {
     return _rtrim(_ltrim(s));
 }
 
+void removeTimeoutAndSetNewAlarm(pid_t finsihedPid) {
+    JobsList::JobEntry *toRemoveJob = alarmList.getJobByPid(finsihedPid);
+    if (toRemoveJob == NULL) {
+        return;
+    }
+    alarmList.removeJobById(toRemoveJob->getJobId());
+    JobsList::JobEntry *soonest = alarmList.getSoonestTimeoutEntry();
+    if (soonest != NULL) {
+        alarm(nextEndingTime - time(NULL));
+        nextAlarmedPid = soonest->getPid();
+    } else {
+        alarm(0); // cancel further alarms since there are no more timeout cmds
+    }
+}
+
 //function to handle foregrounded cmd which was interrupted by a signal
 // if NULL is sent as currJob that mean it was an external cmd in
 // foreground. in case of SIGSTP a new job will be added to job list in
@@ -64,8 +80,14 @@ void handleInterruptedCmd(pid_t pid, Command *cmd,
                           JobsList *jobsList) {
     if (sigINTOn) { // if FG process received ctrl+c
         if (currJob == NULL) {
+            if (cmd->isTimeouted()) {
+                removeTimeoutAndSetNewAlarm(pid);
+            }
             delete cmd;
-        } else {
+        } else { //was foregrounded by fg
+            if (cmd->isTimeouted()) {
+                removeTimeoutAndSetNewAlarm(pid);
+            }
             delete cmd;
             jobsList->removeJobById(currJob->getJobId());
         }
@@ -86,6 +108,7 @@ void handleInterruptedCmd(pid_t pid, Command *cmd,
     }
     foregroundPid = 0;
     isForegroundPipe = false;
+    isForegroundTimeout = false;
 }
 
 void handleInterruptedCmdPipe(Command *cmd) {
@@ -493,6 +516,7 @@ void KillCommand::execute() {
         perror("smash error: kill failed");
         return;
     }
+    //TODO: should we handle SIGKILL with pipes and timeouts? (send SIGINT instead?)
     if (sigNum == SIGSTOP) {
         toKill->setStatus(STOPPED);
     }
@@ -544,14 +568,21 @@ void ForegroundCommand::execute() {
     if (toFG->getCommand()->isPiped()) {
         isForegroundPipe = true;
     }
+    if (toFG->getCommand()->isTimeouted()) {
+        isForegroundTimeout = true;
+    }
     waitpid(toFGPid, NULL, WUNTRACED);
     if (sigINTOn || sigSTPOn) { //was interrupted by signal
         handleInterruptedCmd(toFGPid, resumedCmd, toFG, jobsList);
     } else { //process finished successfully in foreground
         jobsList->removeJobById(jobId); // could also not remove and wait for removal in removeFinshedJobs
+        if (isForegroundTimeout) {
+            removeTimeoutAndSetNewAlarm(toFGPid);
+        }
         delete resumedCmd;
         foregroundPid = 0;
         isForegroundPipe = false;
+        isForegroundTimeout = false;
     }
 
 }
@@ -786,15 +817,54 @@ void TimeoutCommand::execute() {
     endingTime = time(NULL) + duration;
     pid_t timeoutPid = fork();
     if (timeoutPid == 0) { //timeout process
-        //TODO: setpgrp and install handlers! with signal;
-        //TODO: similliar to pipe handle execute of inner cmd
-        //TODO: as in pipe, wait for child (if exists) and handle signals meanwhile-
-        /*TODO: signal handling -
-         * 1. on SIGINT - as in pipe kill child and then timeout itself and then exit
-         * 2. SIGTSTP - send stop to child and then stop to yourself
-         * 3. SIGCONT - continue son;
-         */
-        exit(0);
+        if (isRedirected()) {
+            if (!setOutputFD(getPath(), type)) {
+                exit(0);
+            }
+        }
+        setpgrp();
+        if (signal(SIGINT, timeoutCtrlCHandler) == SIG_ERR) {
+            perror("smash error: failed to set pipe ctrl-C handler");
+            delete innerCmd;
+            exit(0);
+        }
+        if (signal(SIGTSTP, timeoutCtrlZHandler) == SIG_ERR) {
+            perror("smash error: failed to set pipe ctrl-Z handler");
+            delete innerCmd;
+            exit(0);
+        }
+        if (signal(SIGCONT, timeoutSigcontHandler) == SIG_ERR) {
+            perror("smash error: failed to set pipe SIGCONT handler");
+            delete innerCmd;
+            exit(0);
+        }
+        pid_t innerCmdPid = NOT_FORKED;
+        //TODO: make sure we do not need to support pipe as inner cmd!
+        if (dynamic_cast<ExternalCommand *>(innerCmd) != NULL) {
+            innerCmdPid = fork();
+            if (innerCmdPid == -1) {
+                perror("smash error: fork failed");
+                exit(0);
+            }
+            if (innerCmdPid == 0) {//innerCmd
+                setpgrp();
+                if (!(((ExternalCommand *) innerCmd)->isCp())) { //secondCmd external
+                    char **secondBashArgs = createBashArgs(innerCmd->getArgs());
+                    if (secondBashArgs == NULL) exit(0);
+                    execv("/bin/bash", secondBashArgs);
+                    perror("smash error: execv failed");
+                    freeBashArgs(secondBashArgs);
+                    exit(0);
+                } else {//secondCmd is cp command
+                    cpMain(innerCmd->getArgs());
+                }
+            }
+        } else { // innerCmd is built-in
+            innerCmd->execute();
+        }
+        wait(NULL);
+        delete this; //deleting timeoutCMD from timeout memory space
+        kill(getpid(), SIGKILL);
     } else { //smash process
         alarmList.addJob(this, timeoutPid);
         if (nextEndingTime == NO_NEXT_ALARM || nextEndingTime > endingTime) { //no previous alarm exists
@@ -812,19 +882,10 @@ void TimeoutCommand::execute() {
             if (sigINTOn || sigSTPOn) { // was interrupted by signal
                 handleInterruptedCmd(timeoutPid, this, NULL, jobsList);
             } else { // finished successfully or because of timeout or because inner command finished
+                removeTimeoutAndSetNewAlarm(timeoutPid);
                 delete this;
                 isForegroundTimeout = false;
                 foregroundPid = 0;
-                if (!sigAlarmOn) { // finished because inner cmd finished
-                    alarmList.removeJobById(alarmList.getMaxId()); //TODO: weak point
-                    JobsList::JobEntry *soonest = alarmList.getSoonestTimeoutEntry(); // TODO: another weak point
-                    if (soonest != NULL) {
-                        alarm(nextEndingTime - time(NULL));
-                        nextAlarmedPid = soonest->getPid();
-                    } else {
-                        alarm(0); // cancel further alarms since there are no more timeout cmds
-                    }
-                } // else case, finished because of timeout is handled in the handler!
             }
         }
     }
@@ -922,6 +983,7 @@ JobsList::JobEntry *JobsList::getJobByPid(pid_t pid) {
             return &(*iter);
         }
     }
+    return NULL;
 }
 
 JobsList::JobEntry *JobsList::getSoonestTimeoutEntry() {
@@ -974,6 +1036,9 @@ void JobsList::removeFinishedJobs() {
     auto iter = jobsList.begin();
     while (iter != jobsList.end()) {
         if (waitpid(iter->getPid(), NULL, WNOHANG) == iter->getPid()) {
+            if (iter->getCommand()->isTimeouted()) {
+                removeTimeoutAndSetNewAlarm(iter->getPid());
+            }
             auto toDelete = iter++;
             delete toDelete->getCommand();
             jobsList.remove(*toDelete);

@@ -5,6 +5,7 @@
 #include <list>
 #include <cstring>
 #include <fstream>
+#include <unistd.h>
 
 using std::ostream;
 
@@ -19,7 +20,6 @@ using std::list;
 
 extern bool sigSTPOn;
 extern bool sigINTOn;
-extern bool sigAlarmOn;
 extern pid_t foregroundPid;
 extern bool isForegroundPipe;
 extern string defPrompt;
@@ -472,5 +472,7 @@ public:
 
 extern JobsList alarmList;
 extern pid_t nextAlarmedPid;
+
+void removeTimeoutAndSetNewAlarm(pid_t finsihedPid);
 
 #endif //SMASH_COMMAND_H_
