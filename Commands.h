@@ -11,8 +11,8 @@ using std::ostream;
 
 #define COMMAND_ARGS_MAX_LENGTH (200)
 #define COMMAND_MAX_ARGS (20)
-#define NOT_FORKED (-1)
-#define NO_NEXT_ALARM (-1)
+#define NOT_FORKED (-2)
+#define NO_NEXT_ALARM (-2)
 #define ARGS_AMOUNT (25)
 
 using std::string;
@@ -474,6 +474,6 @@ public:
 extern JobsList alarmList;
 extern pid_t nextAlarmedPid;
 
-void removeTimeoutAndSetNewAlarm(pid_t finsihedPid);
+void removeTimeoutAndSetNewAlarm(pid_t finishedPid);
 
 #endif //SMASH_COMMAND_H_

@@ -56,8 +56,8 @@ string _trim(const std::string &s) {
     return _rtrim(_ltrim(s));
 }
 
-void removeTimeoutAndSetNewAlarm(pid_t finsihedPid) {
-    JobsList::JobEntry *toRemoveJob = alarmList.getJobByPid(finsihedPid);
+void removeTimeoutAndSetNewAlarm(pid_t finishedPid) {
+    JobsList::JobEntry *toRemoveJob = alarmList.getJobByPid(finishedPid);
     if (toRemoveJob == NULL) {
         return;
     }
@@ -71,6 +71,7 @@ void removeTimeoutAndSetNewAlarm(pid_t finsihedPid) {
         alarm(nextEndingTime - time(NULL));
         nextAlarmedPid = soonest->getPid();
     } else {
+        nextAlarmedPid = NO_NEXT_ALARM;
         alarm(0); // cancel further alarms since there are no more timeout cmds
     }
 }
@@ -638,6 +639,7 @@ void QuitCommand::execute() {
     if (argsNum > 1) {
         if (isArgumentExist(args, "kill")) {//kill was specified
             jobsList->killAllJobs();
+            alarm(0);
         }
     }
     jobsList->destroyCmds();
