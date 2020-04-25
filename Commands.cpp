@@ -845,7 +845,6 @@ void TimeoutCommand::execute() {
             exit(0);
         }
         pid_t innerCmdPid = NOT_FORKED;
-        //TODO: make sure we do not need to support pipe as inner cmd!
         if (dynamic_cast<ExternalCommand *>(innerCmd) != NULL) {
             innerCmdPid = fork();
             if (innerCmdPid == -1) {

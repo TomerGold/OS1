@@ -80,20 +80,20 @@ void alarmHandler(int sig_num) {
     sigAlarmOn = true;
     cout << "smash: got an alarm" << endl;
     kill(nextAlarmedPid, SIGINT); //sending SIGINT so Timeout cmd will kill it's inner cmd and commit suicide
+    pid_t lastTimeout = nextAlarmedPid;
     removeTimeoutAndSetNewAlarm(nextAlarmedPid);
-
+    kill(lastTimeout, SIGCONT);
 }
 
 void timeoutCtrlCHandler(int sig_num) {
     sigINTOn = true;
-    //TODO: if inner is pipe send SIGINT
     if (timeoutInnerCmdPid != NOT_FORKED) {
         kill(timeoutInnerCmdPid, SIGKILL);
     }
+    timeoutInnerCmdPid = NOT_FORKED; //after killing son send sigcont to timeout so he will finish itself
 }
 
 void timeoutCtrlZHandler(int sig_num) {
-    //TODO: if inner is pipe send SIGTSTP
     if (timeoutInnerCmdPid != NOT_FORKED) {
         kill(timeoutInnerCmdPid, SIGSTOP);
     }
