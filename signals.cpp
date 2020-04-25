@@ -9,6 +9,7 @@ using namespace std;
 
 bool sigSTPOn = false;
 bool sigINTOn = false;
+bool sigAlarmOn = false;
 
 void ctrlCHandler(int sig_num) {
     cout << "smash: got ctrl-C" << endl;
@@ -77,8 +78,11 @@ void pipeSigcontHandler(int sig_num) {
 
 void alarmHandler(int sig_num) {
     //TODO: add printings!
+    sigAlarmOn = true;
+    cout << "smash: got an alarm" << endl;
     removeTimeoutAndSetNewAlarm(nextAlarmedPid);
     kill(nextAlarmedPid, SIGINT); //sending SIGINT so Timeout cmd will kill it's inner cmd and commit suicide
+
 }
 
 void timeoutCtrlCHandler(int sig_num) {

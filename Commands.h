@@ -20,6 +20,7 @@ using std::list;
 
 extern bool sigSTPOn;
 extern bool sigINTOn;
+extern bool sigAlarmOn;
 extern pid_t foregroundPid;
 extern bool isForegroundPipe;
 extern string defPrompt;

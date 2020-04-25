@@ -61,6 +61,10 @@ void removeTimeoutAndSetNewAlarm(pid_t finsihedPid) {
     if (toRemoveJob == NULL) {
         return;
     }
+    if (sigAlarmOn) {
+        cout << "smash: " << toRemoveJob->getCommand()->getOrigCmd() << " timed out!" << endl;
+        sigAlarmOn = false;
+    }
     alarmList.removeJobById(toRemoveJob->getJobId());
     JobsList::JobEntry *soonest = alarmList.getSoonestTimeoutEntry();
     if (soonest != NULL) {
@@ -848,20 +852,21 @@ void TimeoutCommand::execute() {
             }
             if (innerCmdPid == 0) {//innerCmd
                 setpgrp();
-                if (!(((ExternalCommand *) innerCmd)->isCp())) { //secondCmd external
-                    char **secondBashArgs = createBashArgs(innerCmd->getArgs());
-                    if (secondBashArgs == NULL) exit(0);
-                    execv("/bin/bash", secondBashArgs);
+                if (!(((ExternalCommand *) innerCmd)->isCp())) { //innerCmd external
+                    char **innerBashArgs = createBashArgs(innerCmd->getArgs());
+                    if (innerBashArgs == NULL) exit(0);
+                    execv("/bin/bash", innerBashArgs);
                     perror("smash error: execv failed");
-                    freeBashArgs(secondBashArgs);
+                    freeBashArgs(innerBashArgs);
                     exit(0);
-                } else {//secondCmd is cp command
+                } else {//innerCmd is cp command
                     cpMain(innerCmd->getArgs());
                 }
             }
         } else { // innerCmd is built-in
             innerCmd->execute();
         }
+        timeoutInnerCmdPid = innerCmdPid;
         wait(NULL);
         delete this; //deleting timeoutCMD from timeout memory space
         kill(getpid(), SIGKILL);
