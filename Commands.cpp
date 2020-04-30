@@ -333,12 +333,7 @@ void cpMain(char *const *args) {
     if (args[1] == NULL || args[2] == NULL) {
         exit(0);
     }
-    if (strcmp(args[1], args[2]) == 0) {
-        cout << "smash: " << args[1] << " was copied to " << args[2] <<
-             endl;
-        exit(0);
-    }
-    char buffer[BUF_SIZE] = {EOF};
+    char buffer[BUF_SIZE] = "";
     size_t buf_size = BUF_SIZE;
     int fds[2];
     ssize_t readSize, writeStatus = 1;
@@ -347,6 +342,17 @@ void cpMain(char *const *args) {
         perror("smash error: open failed");
         exit(0);
     }
+    char *path1 = realpath(args[1], NULL);
+    char *path2 = realpath(args[2], NULL);
+    if (path2 != NULL && strcmp(path1, path2) == 0) {
+        cout << "smash: " << args[1] << " was copied to " << args[2] <<
+             endl;
+        free(path1);
+        free(path2);
+        exit(0);
+    }
+    free(path1);
+    free(path2);
     fds[1] = open(args[2], O_WRONLY | O_CREAT | O_TRUNC, 0666);
     if (fds[1] == -1) {
         perror("smash error: open failed");
