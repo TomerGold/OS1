@@ -531,10 +531,23 @@ void KillCommand::execute() {
                                                          "exist" << endl;
         return;
     }
-    //TODO: should handle SIGKILL with pipes and timeouts (send SIGINT instead?)
-    if (kill(toKill->getPid(), sigNum) == -1) {
-        perror("smash error: kill failed");
-        return;
+    if (toKill->getCommand()->isPiped() || toKill->getCommand()->isTimeouted()) {
+        if (sigNum == SIGKILL) {
+            if (kill(toKill->getPid(), SIGINT) == -1) {
+                perror("smash error: kill failed");
+                return;
+            }
+        } else if (sigNum == SIGSTOP) {
+            if (kill(toKill->getPid(), SIGTSTP) == -1) {
+                perror("smash error: kill failed");
+                return;
+            }
+        }
+    } else {
+        if (kill(toKill->getPid(), sigNum) == -1) {
+            perror("smash error: kill failed");
+            return;
+        }
     }
     if (sigNum == SIGSTOP) {
         toKill->setStatus(STOPPED);
