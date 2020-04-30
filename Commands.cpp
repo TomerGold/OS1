@@ -427,12 +427,12 @@ bool Command::setOutputFD(const char *path, IO_CHARS type) {
         return false;
     }
     if (type == REDIR) {
-        if (fopen(path, "w") == NULL) {
+        if (open(path, O_WRONLY | O_CREAT | O_TRUNC, 0666) == -1) {
             perror("smash error: open failed");
             return false;
         }
     } else { //must be REDIR_APPEND
-        if (fopen(path, "a") == NULL) {
+        if (open(path, O_WRONLY | O_CREAT | O_APPEND, 0666) == -1) {
             perror("smash error: open failed");
             return false;
         }
