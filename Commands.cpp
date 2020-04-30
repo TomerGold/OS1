@@ -56,13 +56,27 @@ string _trim(const std::string &s) {
     return _rtrim(_ltrim(s));
 }
 
+void setTimeoutCmdToNull(pid_t finishedPid) {
+    JobsList::JobEntry *toRemoveJob = alarmList.getJobByPid(finishedPid);
+    if (toRemoveJob == NULL) {
+        return;
+    }
+    toRemoveJob->setCommandToNull();
+}
+
 void removeTimeoutAndSetNewAlarm(pid_t finishedPid) {
     JobsList::JobEntry *toRemoveJob = alarmList.getJobByPid(finishedPid);
     if (toRemoveJob == NULL) {
         return;
     }
     if (sigAlarmOn) {
-        cout << "smash: " << toRemoveJob->getCommand()->getOrigCmd() << " timed out!" << endl;
+        if (toRemoveJob->getCommand() != NULL) { //print cmd only in case that smash terminated job because of alarm
+            if (waitpid(finishedPid, NULL, WNOHANG) != finishedPid) {
+                cout << "smash: " << toRemoveJob->getCommand()->getOrigCmd() << " timed out!" << endl;
+            } else {
+                toRemoveJob->getCommand()->setFinishedBeforeTimeoutTrue();
+            }
+        }
         sigAlarmOn = false;
     }
     alarmList.removeJobById(toRemoveJob->getJobId());
@@ -86,12 +100,12 @@ void handleInterruptedCmd(pid_t pid, Command *cmd,
     if (sigINTOn) { // if FG process received ctrl+c
         if (currJob == NULL) {
             if (cmd->isTimeouted()) {
-                removeTimeoutAndSetNewAlarm(pid);
+                setTimeoutCmdToNull(pid);
             }
             delete cmd;
         } else { //was foregrounded by fg
             if (cmd->isTimeouted()) {
-                removeTimeoutAndSetNewAlarm(pid);
+                setTimeoutCmdToNull(pid);
             }
             delete cmd;
             jobsList->removeJobById(currJob->getJobId());
@@ -364,7 +378,7 @@ void cpMain(char *const *args) {
 Command::Command(const char *cmd_line) : isBackground(false),
                                          origCmd(cmd_line), redirected
                                                  (false), piped(false),
-                                         stdOutCopy(1), isTimeout(false) {
+                                         stdOutCopy(1), isTimeout(false), finishedBeforeTimeout(false) {
     for (int i = 0; i < ARGS_AMOUNT; ++i) {
         args[i] = NULL;
     }
@@ -517,11 +531,11 @@ void KillCommand::execute() {
                                                          "exist" << endl;
         return;
     }
+    //TODO: should handle SIGKILL with pipes and timeouts (send SIGINT instead?)
     if (kill(toKill->getPid(), sigNum) == -1) {
         perror("smash error: kill failed");
         return;
     }
-    //TODO: should we handle SIGKILL with pipes and timeouts? (send SIGINT instead?)
     if (sigNum == SIGSTOP) {
         toKill->setStatus(STOPPED);
     }
@@ -582,7 +596,7 @@ void ForegroundCommand::execute() {
     } else { //process finished successfully in foreground
         jobsList->removeJobById(jobId); // could also not remove and wait for removal in removeFinshedJobs
         if (isForegroundTimeout) {
-            removeTimeoutAndSetNewAlarm(toFGPid);
+            setTimeoutCmdToNull(toFGPid);
         }
         delete resumedCmd;
         foregroundPid = 0;
@@ -821,6 +835,9 @@ void TimeoutCommand::execute() {
         return;
     }
     endingTime = time(NULL) + duration;
+    if (dynamic_cast<BuiltInCommand *>(innerCmd) != NULL) {
+        innerCmd->execute();
+    }
     pid_t timeoutPid = fork();
     if (timeoutPid == 0) { //timeout process
         if (isRedirected()) {
@@ -864,8 +881,6 @@ void TimeoutCommand::execute() {
                     cpMain(innerCmd->getArgs());
                 }
             }
-        } else { // innerCmd is built-in
-            innerCmd->execute();
         }
         timeoutInnerCmdPid = innerCmdPid;
         wait(NULL);
@@ -888,7 +903,7 @@ void TimeoutCommand::execute() {
             if (sigINTOn || sigSTPOn) { // was interrupted by signal
                 handleInterruptedCmd(timeoutPid, this, NULL, jobsList);
             } else { // finished successfully or because of timeout or because inner command finished
-                removeTimeoutAndSetNewAlarm(timeoutPid);
+                setTimeoutCmdToNull(timeoutPid);
                 delete this;
                 isForegroundTimeout = false;
                 foregroundPid = 0;
@@ -1041,9 +1056,10 @@ void JobsList::removeFinishedJobs() {
     if (jobsList.empty()) return;
     auto iter = jobsList.begin();
     while (iter != jobsList.end()) {
-        if (waitpid(iter->getPid(), NULL, WNOHANG) == iter->getPid()) {
+        if (waitpid(iter->getPid(), NULL, WNOHANG) == iter->getPid()
+            || iter->getCommand()->isFinishedBeforeTimeout()) {
             if (iter->getCommand()->isTimeouted()) {
-                removeTimeoutAndSetNewAlarm(iter->getPid());
+                setTimeoutCmdToNull(iter->getPid());
             }
             auto toDelete = iter++;
             delete toDelete->getCommand();

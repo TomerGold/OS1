@@ -52,6 +52,7 @@ protected:
     IO_CHARS type;
     int stdOutCopy;
     bool isTimeout;
+    bool finishedBeforeTimeout;
 public:
     explicit Command(const char *cmd_line);
 
@@ -116,6 +117,14 @@ public:
 
     char *const *getArgs() const {
         return args;
+    }
+
+    void setFinishedBeforeTimeoutTrue() {
+        finishedBeforeTimeout = true;
+    }
+
+    bool isFinishedBeforeTimeout() const {
+        return finishedBeforeTimeout;
     }
 };
 
@@ -193,6 +202,10 @@ public:
 
         Command *getCommand() const {
             return cmd;
+        }
+
+        void setCommandToNull() {
+            cmd = NULL;
         }
 
         STATUS getStatus() const {
