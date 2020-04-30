@@ -35,6 +35,7 @@ const std::string WHITESPACE = " \n\r\t\f\v";
 #define FUNC_ENTRY()
 #define FUNC_EXIT()
 #endif
+#define BUF_SIZE (4096)
 
 #define DEBUG_PRINT cerr << "DEBUG: "
 
@@ -337,11 +338,10 @@ void cpMain(char *const *args) {
              endl;
         exit(0);
     }
-    //TODO: check why only works with buffer size of 1
-    char buffer[1];
+    char buffer[BUF_SIZE] = {EOF};
+    size_t buf_size = BUF_SIZE;
     int fds[2];
-    size_t buf_size = 1;
-    ssize_t status;
+    ssize_t readSize, writeStatus = 1;
     fds[0] = open(args[1], O_RDONLY);
     if (fds[0] == -1) {
         perror("smash error: open failed");
@@ -353,15 +353,15 @@ void cpMain(char *const *args) {
         close(fds[0]);
         exit(0);
     }
-    while ((status = read(fds[0], buffer, buf_size)) > 0) {
-        if ((write(fds[1], buffer, buf_size)) == -1) {
+    while ((readSize = read(fds[0], buffer, buf_size)) > 0 && writeStatus > 0) {
+        if ((writeStatus = write(fds[1], buffer, readSize)) == -1) {
             perror("smash error: write failed");
             close(fds[0]);
             close(fds[1]);
             exit(0);
         }
     }
-    if (status == -1) {//read failed
+    if (readSize == -1) {//read failed
         perror("smash error: read failed");
         close(fds[0]);
         close(fds[1]);
