@@ -331,6 +331,7 @@ bool isArgumentExist(char **args, const string &toFind) {
 
 void cpMain(char *const *args) {
     if (args[1] == NULL || args[2] == NULL) {
+        cerr << "smash error: cp: invalid arguments" << endl;
         exit(0);
     }
     char buffer[BUF_SIZE] = "";
@@ -527,7 +528,7 @@ void KillCommand::execute() {
         cerr << "smash error: kill: invalid arguments" << endl;
         return;
     }
-    if ((argsNum > 3 && args[3][0] != '>') || sigNum < 0 || sigNum > 31) {
+    if (argsNum > 3 && args[3][0] != '>') {
         cerr << "smash error: kill: invalid arguments" << endl;
         return;
     }
