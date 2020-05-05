@@ -560,12 +560,6 @@ void KillCommand::execute() {
             return;
         }
     }
-    if (sigNum == SIGSTOP) {
-        toKill->setStatus(STOPPED);
-    }
-    if (sigNum == SIGCONT) {
-        toKill->setStatus(RUNNING);
-    }
     cout << "signal number " << sigNum << " was sent to pid "
          << toKill->getPid() << endl;
 }
