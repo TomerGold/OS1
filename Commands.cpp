@@ -528,6 +528,10 @@ void KillCommand::execute() {
         cerr << "smash error: kill: invalid arguments" << endl;
         return;
     }
+    if (args[1][0] != '-') {
+        cerr << "smash error: kill: invalid arguments" << endl;
+        return;
+    }
     if (argsNum > 3 && args[3][0] != '>') {
         cerr << "smash error: kill: invalid arguments" << endl;
         return;
